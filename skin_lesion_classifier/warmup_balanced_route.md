@@ -10,16 +10,11 @@ python src/train.py --config config_balanced.yaml --resume outputs/run_XXX/check
 
 ## Performance Tweaks
 
-### Use GPU acceleration
-
-python src/train.py --config config_warmup.yaml --device cuda
+### Use GPU acceleration (--device mps)
 
 ### Use mixed precision (faster + less memory)
 
-python src/train.py --config config_warmup.yaml --mixed_precision --device mps
-
 ### Run on all CPU cores
-
 export OMP_NUM_THREADS=$(sysctl -n hw.logicalcpu)
 python src/train.py --config config_warmup.yaml
 

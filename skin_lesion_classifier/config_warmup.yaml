@@ -9,6 +9,8 @@ training:
   lr: 0.001                    # Higher LR for warmup
   weight_decay: 0.01
   num_workers: 4
+  device: mps
+  mixed_precision: true
   
 augmentation:
   enabled: true
