@@ -1,0 +1,68 @@
+# =============================================================================
+# Skin Lesion Classification Configuration
+# =============================================================================
+# EfficientNet-V2 based classifier for HAM10000 dataset
+# =============================================================================
+
+# Data Configuration
+data:
+  root: data/HAM10000
+  images_dir: data/HAM10000/images
+  labels_csv: data/HAM10000/labels.csv
+  val_size: 0.15          # Proportion for validation
+  test_size: 0.15         # Proportion for testing
+  lesion_aware: true      # Use lesion-aware splitting to prevent data leakage
+
+# Model Configuration
+model:
+  name: efficientnet_v2
+  size: small             # Options: small, medium, large
+  num_classes: 7          # HAM10000 has 7 classes
+  image_size: 224         # Input image size
+  pretrained: true        # Use ImageNet pretrained weights
+  dropout_rate: 0.5       # Dropout rate for regularization (INCREASED to reduce overfitting)
+  freeze_backbone: false  # Whether to freeze backbone initially
+
+# Training Configuration
+training:
+  seed: 42                # Random seed for reproducibility
+  batch_size: 32          # Batch size (reduce if OOM)
+  epochs: 30              # Maximum number of epochs
+  lr: 0.00005             # Initial learning rate (REDUCED from 0.0001)
+  weight_decay: 0.05      # Weight decay for regularization (INCREASED from 0.01)
+  num_workers: 4          # DataLoader workers
+  use_amp: true           # Use automatic mixed precision (CUDA only)
+  use_weighted_sampling: true  # Use weighted sampling for class balance
+  augmentation: heavy     # Augmentation strength: light, medium, heavy (INCREASED)
+  early_stopping_patience: 5   # Epochs to wait before early stopping (REDUCED from 15)
+  
+  # Learning rate scheduler
+  scheduler:
+    type: cosine          # Options: cosine, onecycle
+    T_0: 10               # Initial restart period (cosine)
+    T_mult: 2             # Period multiplier after each restart
+    eta_min: 0.000001     # Minimum learning rate
+    warmup_pct: 0.1       # Warmup percentage (onecycle)
+
+# Loss Function Configuration
+loss:
+  type: focal             # Options: cross_entropy, focal, label_smoothing
+  focal_gamma: 2.0        # Focal loss gamma parameter
+  label_smoothing: 0.1    # Label smoothing factor
+
+# Evaluation Configuration
+evaluation:
+  batch_size: 64          # Larger batch size for evaluation
+  metrics:
+    - accuracy
+    - precision
+    - recall
+    - f1_score
+    - roc_auc
+    - confusion_matrix
+
+# Output Configuration
+output:
+  save_best_only: false   # Save all checkpoints or just best
+  log_interval: 10        # Log every N batches
+

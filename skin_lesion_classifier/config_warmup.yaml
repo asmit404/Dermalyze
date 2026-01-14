@@ -1,0 +1,32 @@
+model:
+  backbone: efficientnet_b3
+  freeze_backbone: true        # Only train classifier head
+  dropout_rate: 0.3
+  
+training:
+  epochs: 5
+  batch_size: 64
+  lr: 0.001                    # Higher LR for warmup
+  weight_decay: 0.01
+  num_workers: 4
+  
+augmentation:
+  enabled: true
+  intensity: medium
+  techniques:
+    - random_flip
+    - random_rotation: 15
+    - color_jitter: 0.15
+    
+early_stopping:
+  patience: 3
+  monitor: val_loss
+  min_delta: 0.001
+  
+learning_rate_schedule:
+  type: constant
+  
+data:
+  train_split: 0.7
+  val_split: 0.2
+  test_split: 0.1
