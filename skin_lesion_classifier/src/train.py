@@ -436,11 +436,23 @@ def train(
     
     # Create loss function
     loss_config = config.get("loss", {})
+    
+    # Handle alpha parameter - use manual values if provided, otherwise use computed class weights
+    focal_alpha = None
+    if "alpha" in loss_config and loss_config["alpha"] is not None:
+        focal_alpha = torch.tensor(loss_config["alpha"], dtype=torch.float32)
+        logger.info(f"Using manual alpha weights: {focal_alpha.tolist()}")
+    else:
+        focal_alpha = class_weights
+        if focal_alpha is not None:
+            logger.info(f"Using computed class weights: {focal_alpha.tolist()}")
+    
     criterion = get_loss_function(
         loss_type=loss_config.get("type", "focal"),
-        class_weights=class_weights,
+        class_weights=focal_alpha if loss_config.get("type") != "focal" else None,
         label_smoothing=loss_config.get("label_smoothing", 0.1),
-        focal_gamma=loss_config.get("focal_gamma", 2.0),
+        focal_gamma=loss_config.get("gamma", loss_config.get("focal_gamma", 2.0)),
+        focal_alpha=focal_alpha if loss_config.get("type") == "focal" else None,
     )
     
     # Create optimizer

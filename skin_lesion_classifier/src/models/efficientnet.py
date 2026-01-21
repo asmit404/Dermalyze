@@ -355,15 +355,17 @@ def get_loss_function(
     class_weights: Optional[torch.Tensor] = None,
     label_smoothing: float = 0.1,
     focal_gamma: float = 2.0,
+    focal_alpha: Optional[torch.Tensor] = None,
 ) -> nn.Module:
     """
     Get the loss function for training.
     
     Args:
         loss_type: Type of loss function
-        class_weights: Optional class weights for imbalanced data
+        class_weights: Optional class weights for imbalanced data (for cross_entropy and label_smoothing)
         label_smoothing: Smoothing factor for label smoothing loss
         focal_gamma: Focusing parameter for focal loss
+        focal_alpha: Alpha weights for focal loss (if None, uses class_weights)
         
     Returns:
         Loss function module
@@ -371,7 +373,8 @@ def get_loss_function(
     if loss_type == "cross_entropy":
         return nn.CrossEntropyLoss(weight=class_weights)
     elif loss_type == "focal":
-        return FocalLoss(alpha=class_weights, gamma=focal_gamma)
+        alpha = focal_alpha if focal_alpha is not None else class_weights
+        return FocalLoss(alpha=alpha, gamma=focal_gamma)
     elif loss_type == "label_smoothing":
         return LabelSmoothingCrossEntropy(
             smoothing=label_smoothing, weight=class_weights

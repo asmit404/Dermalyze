@@ -4,7 +4,7 @@ model:
   dropout_rate: 0.4
   
 training:
-  epochs: 20 # Change this to 40
+  epochs: 40 # Change this to 20 for testing
   batch_size: 64
   lr: 0.00008
   weight_decay: 0.02

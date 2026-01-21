@@ -47,7 +47,10 @@ training:
 # Loss Function Configuration
 loss:
   type: focal             # Options: cross_entropy, focal, label_smoothing
-  focal_gamma: 2.0        # Focal loss gamma parameter
+  gamma: 2.0              # Focal loss gamma parameter (focusing parameter)
+  # Manual alpha weights for: [akiec, bcc, bkl, df, mel, nv, vasc]
+  # If not specified, will be computed automatically from class distribution
+  alpha: [2.5, 2.0, 1.5, 3.5, 2.5, 0.4, 3.0]
   label_smoothing: 0.1    # Label smoothing factor
 
 # Evaluation Configuration
