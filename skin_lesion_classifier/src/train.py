@@ -497,14 +497,29 @@ def train(
     # Resume from checkpoint if specified
     start_epoch = 0
     best_val_loss = float("inf")
+    has_saved_best = False
     
     if resume_from is not None and resume_from.exists():
         logger.info(f"Resuming from checkpoint: {resume_from}")
         start_epoch, prev_metrics = load_checkpoint(
             resume_from, model, optimizer, scheduler
         )
-        best_val_loss = prev_metrics.get("val_loss", float("inf"))
         start_epoch += 1
+        
+        # Check if best checkpoint exists and load its metrics
+        best_checkpoint_path = output_dir / "checkpoint_best.pt"
+        if best_checkpoint_path.exists():
+            logger.info("Found existing best checkpoint - loading its metrics")
+            best_checkpoint = torch.load(best_checkpoint_path, map_location="cpu")
+            best_metrics = best_checkpoint.get("metrics", {})
+            best_val_loss = best_metrics.get("val_loss", float("inf"))
+            has_saved_best = True
+            logger.info(f"Best validation loss from existing checkpoint: {best_val_loss:.4f}")
+        else:
+            # Use metrics from resumed checkpoint as baseline
+            best_val_loss = prev_metrics.get("val_loss", float("inf"))
+            has_saved_best = False
+            logger.warning("No existing best checkpoint found - will create new one")
     
     # Training history
     history = {
@@ -518,9 +533,6 @@ def train(
     # Training loop
     logger.info("Starting training...")
     start_time = time.time()
-    
-    # Flag to ensure we save at least one best checkpoint
-    has_saved_best = False
     
     for epoch in range(start_epoch, epochs):
         epoch_start = time.time()
@@ -572,15 +584,10 @@ def train(
         history["val_acc"].append(val_metrics["accuracy"])
         history["lr"].append(current_lr)
         
-        # Check for best model
+        # Check for best model and save checkpoint
         is_best = val_metrics["loss"] < best_val_loss
         if is_best:
             best_val_loss = val_metrics["loss"]
-            has_saved_best = True
-        
-        # For first epoch, ensure we save a best checkpoint even if resuming
-        if epoch == start_epoch and not has_saved_best:
-            is_best = True
             has_saved_best = True
         
         # Save checkpoint
