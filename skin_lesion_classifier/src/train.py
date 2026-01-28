@@ -320,9 +320,11 @@ def save_checkpoint(
         torch.save(checkpoint, best_path)
         logger.info(f"Saved best model with val_loss: {metrics['val_loss']:.4f}")
     
-    # Save epoch checkpoint (optional, for resuming)
-    epoch_path = output_dir / f"checkpoint_epoch_{epoch}.pt"
-    torch.save(checkpoint, epoch_path)
+    # Save epoch checkpoint (optional, controlled by config)
+    save_epoch_checkpoints = config.get("output", {}).get("save_epoch_checkpoints", False)
+    if save_epoch_checkpoints:
+        epoch_path = output_dir / f"checkpoint_epoch_{epoch}.pt"
+        torch.save(checkpoint, epoch_path)
 
 
 def load_checkpoint(
