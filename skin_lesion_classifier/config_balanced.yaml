@@ -36,3 +36,8 @@ data:
   train_split: 0.7
   val_split: 0.2
   test_split: 0.1
+
+output:
+  save_best_only: false
+  save_epoch_checkpoints: false
+  log_interval: 10
