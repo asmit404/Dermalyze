@@ -2,60 +2,87 @@
 # Skin Lesion Classification Configuration
 # =============================================================================
 # EfficientNet-V2 based classifier for HAM10000 dataset
-# =============================================================================
 
+# -----------------------------------------------------------------------------
 # Data Configuration
+# -----------------------------------------------------------------------------
 data:
   root: data/HAM10000
   images_dir: data/HAM10000/images
   labels_csv: data/HAM10000/labels.csv
-  val_size: 0.15          # Proportion for validation
-  test_size: 0.15         # Proportion for testing
-  lesion_aware: true      # Use lesion-aware splitting to prevent data leakage
+  val_size: 0.15
+  test_size: 0.15
+  lesion_aware: true        # Prevent lesion-level data leakage
 
+# -----------------------------------------------------------------------------
 # Model Configuration
+# -----------------------------------------------------------------------------
 model:
   name: efficientnet_v2
-  size: small             # Options: small, medium, large
-  num_classes: 7          # HAM10000 has 7 classes
-  image_size: 224         # Input image size
-  pretrained: true        # Use ImageNet pretrained weights
-  dropout_rate: 0.5       # Dropout rate for regularization (INCREASED to reduce overfitting)
-  freeze_backbone: false  # Whether to freeze backbone initially
+  size: small
+  num_classes: 7
+  image_size: 224
+  pretrained: true
+  dropout_rate: 0.35        # ↓ Reduced (was choking learning at 0.65)
+  freeze_backbone: false
 
+# -----------------------------------------------------------------------------
 # Training Configuration
+# -----------------------------------------------------------------------------
 training:
-  seed: 42                # Random seed for reproducibility
-  batch_size: 32          # Batch size (reduce if OOM)
-  epochs: 30              # Maximum number of epochs
-  lr: 0.00005             # Initial learning rate (REDUCED from 0.0001)
-  weight_decay: 0.05      # Weight decay for regularization (INCREASED from 0.01)
-  num_workers: 4          # DataLoader workers
-  use_amp: true           # Use automatic mixed precision (CUDA only)
-  use_weighted_sampling: true  # Use weighted sampling for class balance
-  augmentation: heavy     # Augmentation strength: light, medium, heavy (INCREASED)
-  early_stopping_patience: 5   # Epochs to wait before early stopping (REDUCED from 15)
-  
-  # Learning rate scheduler
+  seed: 42
+  batch_size: 32
+  epochs: 40                # ↑ Give model time to converge
+  lr: 0.0003                # ↑ Better for EfficientNet fine-tuning
+  weight_decay: 0.02        # ↓ Balanced L2 regularization
+  num_workers: 4
+  use_amp: true
+  use_weighted_sampling: true
+  augmentation: medium
+  early_stopping_patience: 6
+
+  # Learning Rate Scheduler
   scheduler:
-    type: cosine          # Options: cosine, onecycle
-    T_0: 10               # Initial restart period (cosine)
-    T_mult: 2             # Period multiplier after each restart
-    eta_min: 0.000001     # Minimum learning rate
-    warmup_pct: 0.1       # Warmup percentage (onecycle)
+    type: cosine
+    T_0: 20
+    T_mult: 1
+    eta_min: 0.00001
+    warmup_pct: 0.05
 
-# Loss Function Configuration
+# -----------------------------------------------------------------------------
+# Loss Function
+# -----------------------------------------------------------------------------
 loss:
-  type: focal             # Options: cross_entropy, focal, label_smoothing
-  gamma: 2.0              # Focal loss gamma parameter (focusing parameter)
-  # Manual alpha weights for: [akiec, bcc, bkl, df, mel, nv, vasc]
-  # If not specified, will be computed automatically from class distribution
-  alpha: [2.5, 2.0, 1.5, 3.5, 2.5, 0.4, 3.0]
-  label_smoothing: 0.1    # Label smoothing factor
+  type: cross_entropy
+  label_smoothing: 0.05     # ↓ Prevents overconfidence without suppressing signal
 
+# -----------------------------------------------------------------------------
+# Data Augmentation (Dermatoscopy-Safe)
+# -----------------------------------------------------------------------------
+augmentation:
+  enabled: true
+  intensity: medium
+  techniques:
+    - random_horizontal_flip: 0.5
+    - random_vertical_flip: 0.3
+    - random_rotation: 25
+    - color_jitter:
+        brightness: 0.2
+        contrast: 0.2
+        saturation: 0.2
+        hue: 0.1
+    - gaussian_blur: 0.1
+    - random_affine:
+        degrees: 15
+        translate: 0.1
+        scale: [0.9, 1.1]
+    - cutout: 0.1
+
+# -----------------------------------------------------------------------------
 # Evaluation Configuration
+# -----------------------------------------------------------------------------
 evaluation:
-  batch_size: 64          # Larger batch size for evaluation
+  batch_size: 64
   metrics:
     - accuracy
     - precision
@@ -64,8 +91,12 @@ evaluation:
     - roc_auc
     - confusion_matrix
 
+# -----------------------------------------------------------------------------
 # Output Configuration
+# -----------------------------------------------------------------------------
 output:
-  save_best_only: false   # Save all checkpoints or just best
-  log_interval: 10        # Log every N batches
+  save_best_only: true
+  log_interval: 10
+  save_training_history: true
+
 
