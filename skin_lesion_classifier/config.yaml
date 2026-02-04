@@ -23,6 +23,7 @@ model:
   num_classes: 7
   image_size: 224
   pretrained: true
+  head_type: simple
   dropout_rate: 0.35        # ↓ Reduced (was choking learning at 0.65)
   freeze_backbone: false
 

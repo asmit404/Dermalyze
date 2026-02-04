@@ -41,6 +41,7 @@ class SkinLesionClassifier(nn.Module):
         dropout_rate: float = 0.3,
         freeze_backbone: bool = False,
         freeze_layers: Optional[int] = None,
+        head_type: Literal["simple", "acrnn"] = "simple",
     ):
         """
         Initialize the skin lesion classifier.
@@ -52,34 +53,39 @@ class SkinLesionClassifier(nn.Module):
             dropout_rate: Dropout rate for regularization
             freeze_backbone: Whether to freeze all backbone layers
             freeze_layers: Number of backbone layers to freeze (from the start)
+            head_type: Type of classification head ("simple" or "acrnn")
         """
         super().__init__()
         
         self.num_classes = num_classes
         self.model_size = model_size
+        self.head_type = head_type
         
         # Load pretrained backbone
         self.backbone, self.feature_dim = self._create_backbone(
             model_size, pretrained
         )
         
-        # Custom classification head with dropout for regularization
-        # Using consistent dropout throughout for stronger regularization
-        self.classifier = nn.Sequential(
-            nn.Dropout(p=dropout_rate),
-            nn.Linear(self.feature_dim, 512),
-            nn.BatchNorm1d(512),
-            nn.ReLU(inplace=True),
-            nn.Dropout(p=dropout_rate),  # Increased from dropout_rate/2
-            nn.Linear(512, 256),
-            nn.BatchNorm1d(256),
-            nn.ReLU(inplace=True),
-            nn.Dropout(p=dropout_rate),  # Increased from dropout_rate/2
-            nn.Linear(256, num_classes),
-        )
-        
-        # Initialize classifier weights
-        self._initialize_classifier()
+        if head_type == "acrnn":
+            from .acrnn import ACRNN
+            self.classifier = ACRNN(input_dim=self.feature_dim, num_classes=num_classes)
+        else:
+            # Custom classification head with dropout for regularization
+            # Using consistent dropout throughout for stronger regularization
+            self.classifier = nn.Sequential(
+                nn.Dropout(p=dropout_rate),
+                nn.Linear(self.feature_dim, 512),
+                nn.BatchNorm1d(512),
+                nn.ReLU(inplace=True),
+                nn.Dropout(p=dropout_rate),  # Increased from dropout_rate/2
+                nn.Linear(512, 256),
+                nn.BatchNorm1d(256),
+                nn.ReLU(inplace=True),
+                nn.Dropout(p=dropout_rate),  # Increased from dropout_rate/2
+                nn.Linear(256, num_classes),
+            )
+            # Initialize classifier weights for simple head
+            self._initialize_classifier()
         
         # Freeze backbone if specified
         if freeze_backbone:
@@ -327,6 +333,7 @@ def create_model(
     pretrained: bool = True,
     dropout_rate: float = 0.3,
     freeze_backbone: bool = False,
+    head_type: Literal["simple", "acrnn"] = "simple",
 ) -> SkinLesionClassifier:
     """
     Factory function to create a skin lesion classifier.
@@ -337,6 +344,7 @@ def create_model(
         pretrained: Whether to use pretrained weights
         dropout_rate: Dropout rate for regularization
         freeze_backbone: Whether to freeze backbone layers
+        head_type: Type of classification head ("simple" or "acrnn")
         
     Returns:
         Configured SkinLesionClassifier model
@@ -347,6 +355,7 @@ def create_model(
         pretrained=pretrained,
         dropout_rate=dropout_rate,
         freeze_backbone=freeze_backbone,
+        head_type=head_type,
     )
 
 

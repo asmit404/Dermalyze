@@ -430,6 +430,7 @@ def train(
         pretrained=model_config.get("pretrained", True),
         dropout_rate=model_config.get("dropout_rate", 0.3),
         freeze_backbone=model_config.get("freeze_backbone", False),
+        head_type=model_config.get("head_type", "simple"),
     )
     model = model.to(device)
     
