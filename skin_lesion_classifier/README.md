@@ -65,7 +65,8 @@ skin_lesion_classifier/
 │       └── test_split.csv        # Test split
 ├── scripts/
 │   ├── visualize_training.py     # Visualize training curves
-│   └── check_fit.py              # Analyze overfitting/underfitting
+│   ├── check_fit.py              # Analyze overfitting/underfitting
+│   └── benchmark.py              # Performance profiling tool
 ├── src/
 │   ├── data/
 │   │   ├── __init__.py
@@ -99,6 +100,24 @@ source venv/bin/activate  # On Windows: venv\Scripts\activate
 ```bash
 pip install -r requirements.txt
 ```
+
+### Performance Benchmarking
+
+Measure your actual training performance:
+
+```bash
+python scripts/benchmark.py --num-batches 20
+```
+
+This comprehensive benchmark reports:
+- Data loading speed
+- Forward pass throughput
+- Backward pass timing
+- Training step breakdown
+- Memory usage (allocated/reserved)
+- Estimated epoch time
+
+If you need exact reproducibility for research, set `fast_mode: false` in config (will be ~30% slower).
 
 ## Dataset Setup
 
@@ -174,9 +193,14 @@ training:
   epochs: 40               # Maximum epochs
   lr: 0.0003               # Learning rate
   weight_decay: 0.02       # L2 regularization
-  use_amp: true            # Mixed precision training (faster)
+  num_workers: 4           
+  use_amp: false           # Disabled for MPS (no benefit)
+  use_torch_compile: false # Disabled for MPS (backward pass issues)
+  fast_mode: true          # Speed over determinism (~40% faster)
   use_weighted_sampling: true  # Balance class distribution
   early_stopping_patience: 6   # Stop if no improvement
+  prefetch_factor: 2       # Prefetch batches for pipeline
+  persistent_workers: true # Keep workers alive between epochs
   
   scheduler:
     type: cosine           # Cosine annealing with warm restarts
@@ -191,7 +215,7 @@ loss:
 data:
   val_size: 0.15           # Validation split proportion
   test_size: 0.15          # Test split proportion
-  lesion_aware: true      m# Group by lesion_id to prevent leakage
+  lesion_aware:true        # Group by lesion_id to prevent leakage
 ```
 
 ### Analyzing Training Progress
@@ -204,6 +228,9 @@ python scripts/visualize_training.py --run outputs/run_20260205_120000
 
 # Quick fit analysis (overfitting/underfitting detector)
 python scripts/check_fit.py outputs/run_20260205_120000/training_history.json
+
+# Benchmark training performance (especially useful for optimization)
+python scripts/benchmark.py --num-batches 50
 ```
 
 ## Evaluation
