@@ -423,14 +423,16 @@ def train(
     
     # Create model
     model_config = config.get("model", {})
+    head_type = model_config.get("head_type", "simple")
     logger.info("Creating model...")
+    logger.info(f"Using {head_type.upper()} classification head")
     model = create_model(
         num_classes=model_config.get("num_classes", 7),
         model_size=model_config.get("size", "small"),
         pretrained=model_config.get("pretrained", True),
         dropout_rate=model_config.get("dropout_rate", 0.3),
         freeze_backbone=model_config.get("freeze_backbone", False),
-        head_type=model_config.get("head_type", "simple"),
+        head_type=head_type,
     )
     model = model.to(device)
     
