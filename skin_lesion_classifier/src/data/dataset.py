@@ -336,6 +336,8 @@ def create_dataloaders(
     augmentation_strength: Literal["light", "medium", "heavy"] = "medium",
     use_weighted_sampling: bool = True,
     pin_memory: bool = True,
+    prefetch_factor: Optional[int] = 2,
+    persistent_workers: bool = False,
 ) -> Tuple[DataLoader, DataLoader, DataLoader]:
     """
     Create PyTorch DataLoaders for training, validation, and testing.
@@ -350,7 +352,9 @@ def create_dataloaders(
         image_size: Target image size
         augmentation_strength: Strength of training augmentation
         use_weighted_sampling: Whether to use weighted sampling for class balance
-        pin_memory: Whether to pin memory (faster GPU transfer)
+        pin_memory: Whether to pin memory (faster GPU transfer, only useful for CUDA)
+        prefetch_factor: Number of batches to prefetch per worker (None to disable)
+        persistent_workers: Keep workers alive between epochs (faster but more memory)
         
     Returns:
         Tuple of (train_loader, val_loader, test_loader)
@@ -387,31 +391,41 @@ def create_dataloaders(
         )
         train_shuffle = False  # Sampler handles shuffling
     
-    # Create DataLoaders
+    # Create DataLoaders with optimized settings
+    # Common kwargs for all loaders
+    common_kwargs = {
+        "num_workers": num_workers,
+        "pin_memory": pin_memory,
+    }
+    
+    # Add prefetch_factor and persistent_workers only if num_workers > 0
+    if num_workers > 0:
+        if prefetch_factor is not None:
+            common_kwargs["prefetch_factor"] = prefetch_factor
+        if persistent_workers:
+            common_kwargs["persistent_workers"] = persistent_workers
+    
     train_loader = DataLoader(
         train_dataset,
         batch_size=batch_size,
         shuffle=train_shuffle,
         sampler=train_sampler,
-        num_workers=num_workers,
-        pin_memory=pin_memory,
         drop_last=True,  # Drop incomplete batches for training stability
+        **common_kwargs,
     )
     
     val_loader = DataLoader(
         val_dataset,
         batch_size=batch_size,
         shuffle=False,
-        num_workers=num_workers,
-        pin_memory=pin_memory,
+        **common_kwargs,
     )
     
     test_loader = DataLoader(
         test_dataset,
         batch_size=batch_size,
         shuffle=False,
-        num_workers=num_workers,
-        pin_memory=pin_memory,
+        **common_kwargs,
     )
     
     return train_loader, val_loader, test_loader

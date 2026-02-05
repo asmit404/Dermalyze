@@ -55,15 +55,26 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-def set_seed(seed: int) -> None:
-    """Set random seeds for reproducibility."""
+def set_seed(seed: int, fast_mode: bool = False) -> None:
+    """Set random seeds for reproducibility.
+    
+    Args:
+        seed: Random seed value
+        fast_mode: If True, disables deterministic mode for faster training
+    """
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
-    # For deterministic operations (may slow down training)
-    torch.backends.cudnn.deterministic = True
-    torch.backends.cudnn.benchmark = False
+    
+    if not fast_mode:
+        # For deterministic operations
+        torch.backends.cudnn.deterministic = True
+        torch.backends.cudnn.benchmark = False
+    else:
+        # Faster training mode
+        torch.backends.cudnn.benchmark = True
+        torch.backends.cudnn.deterministic = False
 
 
 def load_config(config_path: Path | str) -> Dict[str, Any]:
@@ -200,15 +211,18 @@ def train_one_epoch(
     model.train()
     metrics = MetricTracker()
     
+    # Use non_blocking only for CUDA
+    non_blocking = device.type == "cuda"
+    
     pbar = tqdm(train_loader, desc=f"Epoch {epoch} [Train]", leave=False)
     
     for batch_idx, (images, targets) in enumerate(pbar):
-        images = images.to(device, non_blocking=True)
-        targets = targets.to(device, non_blocking=True)
+        images = images.to(device, non_blocking=non_blocking)
+        targets = targets.to(device, non_blocking=non_blocking)
         
         optimizer.zero_grad(set_to_none=True)
         
-        # Forward pass with mixed precision
+        # Forward pass with mixed precision (only for CUDA)
         if use_amp and device.type == "cuda":
             with autocast(device_type="cuda"):
                 outputs = model(images)
@@ -221,6 +235,7 @@ def train_one_epoch(
             scaler.step(optimizer)
             scaler.update()
         else:
+            # Standard training (MPS and CPU)
             outputs = model(images)
             loss = criterion(outputs, targets)
             loss.backward()
@@ -269,11 +284,14 @@ def validate(
     model.eval()
     metrics = MetricTracker()
     
+    # Use non_blocking only for CUDA
+    non_blocking = device.type == "cuda"
+    
     pbar = tqdm(val_loader, desc=f"Epoch {epoch} [Val]", leave=False)
     
     for images, targets in pbar:
-        images = images.to(device, non_blocking=True)
-        targets = targets.to(device, non_blocking=True)
+        images = images.to(device, non_blocking=non_blocking)
+        targets = targets.to(device, non_blocking=non_blocking)
         
         outputs = model(images)
         loss = criterion(outputs, targets)
@@ -361,9 +379,11 @@ def train(
         resume_from: Path to checkpoint to resume from
     """
     # Set random seed
-    seed = config.get("training", {}).get("seed", 42)
-    set_seed(seed)
-    logger.info(f"Random seed: {seed}")
+    train_config = config.get("training", {})
+    seed = train_config.get("seed", 42)
+    fast_mode = train_config.get("fast_mode", True)
+    set_seed(seed, fast_mode=fast_mode)
+    logger.info(f"Random seed: {seed} (fast_mode={fast_mode})")
     
     # Get device
     device = get_device()
@@ -393,8 +413,7 @@ def train(
     val_df.to_csv(output_dir / "val_split.csv", index=False)
     test_df.to_csv(output_dir / "test_split.csv", index=False)
     
-    # Get training config
-    train_config = config.get("training", {})
+    # Extract training config values
     batch_size = train_config.get("batch_size", 32)
     num_workers = train_config.get("num_workers", 4)
     epochs = train_config.get("epochs", 30)
@@ -404,6 +423,11 @@ def train(
     
     # Create DataLoaders
     logger.info("Creating DataLoaders...")
+    prefetch_factor = train_config.get("prefetch_factor", 2)
+    persistent_workers = train_config.get("persistent_workers", True) and num_workers > 0
+    # pin_memory only helps with CUDA, not MPS or CPU
+    pin_memory = device.type == "cuda"
+    
     train_loader, val_loader, _ = create_dataloaders(
         train_df=train_df,
         val_df=val_df,
@@ -414,6 +438,9 @@ def train(
         image_size=config.get("model", {}).get("image_size", 224),
         augmentation_strength=train_config.get("augmentation", "medium"),
         use_weighted_sampling=train_config.get("use_weighted_sampling", True),
+        prefetch_factor=prefetch_factor,
+        persistent_workers=persistent_workers,
+        pin_memory=pin_memory,
     )
     
     # Calculate class weights for loss function
@@ -435,6 +462,22 @@ def train(
         head_type=head_type,
     )
     model = model.to(device)
+    
+    # Enable torch.compile for PyTorch 2.0+ (skip for MPS due to potential backward pass issues)
+    use_compile = train_config.get("use_torch_compile", True)
+    if use_compile and hasattr(torch, "compile"):
+        if device.type == "mps":
+            logger.warning(
+                "torch.compile is enabled but running on MPS. "
+                "MPS may have issues with backward passes in compiled mode. "
+                "Set use_torch_compile: false in config if you encounter errors."
+            )
+        try:
+            logger.info("Compiling model with torch.compile()...")
+            model = torch.compile(model, mode="default")
+            logger.info("Model compiled successfully")
+        except Exception as e:
+            logger.warning(f"torch.compile failed: {e}. Continuing without compilation.")
     
     logger.info(f"Model parameters: {model.get_total_params():,}")
     logger.info(f"Trainable parameters: {model.get_trainable_params():,}")
