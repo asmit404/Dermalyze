@@ -23,7 +23,7 @@ model:
   num_classes: 7
   image_size: 224
   pretrained: true
-  head_type: simple
+  head_type: acrnn          # Attention-based Conv Recurrent NN classification head
   dropout_rate: 0.35        # ↓ Reduced (was choking learning at 0.65)
   freeze_backbone: false
 
@@ -32,15 +32,19 @@ model:
 # -----------------------------------------------------------------------------
 training:
   seed: 42
-  batch_size: 32
+  batch_size: 48    
   epochs: 40                # ↑ Give model time to converge
   lr: 0.0003                # ↑ Better for EfficientNet fine-tuning
   weight_decay: 0.02        # ↓ Balanced L2 regularization
   num_workers: 4
-  use_amp: true
+  use_amp: false            # MPS doesn't support AMP efficiently
+  use_torch_compile: false  # Disabled for MPS (backward pass issues)
   use_weighted_sampling: true
+  fast_mode: true           # Disable deterministic operations for speed
   augmentation: medium
   early_stopping_patience: 6
+  prefetch_factor: 2        # Prefetch batches for better pipeline
+  persistent_workers: true  # Keep workers alive between epochs
 
   # Learning Rate Scheduler
   scheduler:
@@ -83,7 +87,7 @@ augmentation:
 # Evaluation Configuration
 # -----------------------------------------------------------------------------
 evaluation:
-  batch_size: 64
+  batch_size: 96
   metrics:
     - accuracy
     - precision
