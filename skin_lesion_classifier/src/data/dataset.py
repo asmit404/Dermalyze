@@ -168,7 +168,7 @@ class HAM10000Dataset(Dataset):
 def get_transforms(
     split: Literal["train", "val", "test"],
     image_size: int = 224,
-    augmentation_strength: Literal["light", "medium", "heavy"] = "medium",
+    augmentation_strength: Literal["light", "medium", "heavy", "domain"] = "medium",
 ) -> transforms.Compose:
     """
     Get image transforms for different dataset splits.
@@ -186,6 +186,7 @@ def get_transforms(
     
     if split == "train":
         # Training transforms with augmentation
+        post_transforms = []
         if augmentation_strength == "light":
             aug_transforms = [
                 transforms.RandomHorizontalFlip(p=0.5),
@@ -204,7 +205,7 @@ def get_transforms(
                     degrees=0, translate=(0.1, 0.1), scale=(0.9, 1.1)
                 ),
             ]
-        else:  # heavy
+        elif augmentation_strength == "heavy":
             aug_transforms = [
                 transforms.RandomHorizontalFlip(p=0.5),
                 transforms.RandomVerticalFlip(p=0.5),
@@ -218,12 +219,36 @@ def get_transforms(
                 transforms.RandomPerspective(distortion_scale=0.2, p=0.3),
                 transforms.GaussianBlur(kernel_size=3, sigma=(0.1, 2.0)),
             ]
+        else:  # domain (stronger, domain-robust)
+            aug_transforms = [
+                transforms.RandomHorizontalFlip(p=0.5),
+                transforms.RandomVerticalFlip(p=0.5),
+                transforms.RandomRotation(degrees=45),
+                transforms.ColorJitter(
+                    brightness=0.4, contrast=0.4, saturation=0.4, hue=0.15
+                ),
+                transforms.RandomAffine(
+                    degrees=0, translate=(0.2, 0.2), scale=(0.8, 1.2), shear=12
+                ),
+                transforms.RandomPerspective(distortion_scale=0.25, p=0.4),
+                transforms.RandomAutocontrast(p=0.3),
+                transforms.RandomEqualize(p=0.3),
+                transforms.RandomAdjustSharpness(sharpness_factor=1.5, p=0.3),
+                transforms.RandomGrayscale(p=0.05),
+                transforms.GaussianBlur(kernel_size=3, sigma=(0.1, 2.0)),
+            ]
+            post_transforms = [
+                transforms.RandomErasing(
+                    p=0.2, scale=(0.02, 0.12), ratio=(0.3, 3.3), value="random"
+                )
+            ]
         
         return transforms.Compose([
             transforms.Resize((image_size + 32, image_size + 32)),
             transforms.RandomCrop(image_size),
             *aug_transforms,
             transforms.ToTensor(),
+            *post_transforms,
             normalize,
         ])
     
@@ -333,7 +358,7 @@ def create_dataloaders(
     batch_size: int = 32,
     num_workers: int = 4,
     image_size: int = 224,
-    augmentation_strength: Literal["light", "medium", "heavy"] = "medium",
+    augmentation_strength: Literal["light", "medium", "heavy", "domain"] = "medium",
     use_weighted_sampling: bool = True,
     pin_memory: bool = True,
     prefetch_factor: Optional[int] = 2,
