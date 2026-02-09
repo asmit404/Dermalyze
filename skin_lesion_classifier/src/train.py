@@ -502,6 +502,8 @@ def train_one_epoch_cached(
     optimizer: torch.optim.Optimizer,
     device: torch.device,
     epoch: int = 0,
+    model_ema: Optional["ModelEMA"] = None,
+    parent_model: Optional[nn.Module] = None,
 ) -> Dict[str, float]:
     """
     Train only the classification head using cached backbone features.
@@ -516,6 +518,8 @@ def train_one_epoch_cached(
         optimizer: Optimizer (should only contain classifier params)
         device: Device to train on
         epoch: Current epoch number
+        model_ema: Optional ModelEMA to update after each step
+        parent_model: The full model (needed for EMA update)
 
     Returns:
         Dictionary of training metrics
@@ -537,6 +541,10 @@ def train_one_epoch_cached(
         loss.backward()
         torch.nn.utils.clip_grad_norm_(classifier.parameters(), max_norm=1.0)
         optimizer.step()
+
+        # Update ModelEMA so validation sees updated weights
+        if model_ema is not None and parent_model is not None:
+            model_ema.update(parent_model)
 
         preds = torch.argmax(outputs, dim=1)
         metrics.update(loss.item(), preds, targets)
@@ -1151,6 +1159,8 @@ def train(
                 optimizer=optimizer,
                 device=device,
                 epoch=epoch + 1,
+                model_ema=model_ema,
+                parent_model=base_model,
             )
         else:
             train_metrics = train_one_epoch(
