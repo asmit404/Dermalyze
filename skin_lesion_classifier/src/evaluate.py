@@ -82,7 +82,6 @@ def load_model(
     model_config = config.get("model", {})
     model = SkinLesionClassifier(
         num_classes=model_config.get("num_classes", 7),
-        model_size=model_config.get("size", "small"),
         pretrained=False,  # We're loading weights from checkpoint
         dropout_rate=model_config.get("dropout_rate", 0.3),
     )

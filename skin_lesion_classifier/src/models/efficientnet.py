@@ -1,7 +1,7 @@
 """
-EfficientNet-V2 Model for Skin Lesion Classification.
+EfficientNet-V2 Small Model for Skin Lesion Classification.
 
-This module provides the model architecture based on EfficientNet-V2 with
+This module provides the model architecture based on EfficientNet-V2 Small with
 a custom classification head for the HAM10000 seven-class classification task.
 """
 
@@ -13,16 +13,12 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torchvision import models
-from torchvision.models import (
-    EfficientNet_V2_S_Weights,
-    EfficientNet_V2_M_Weights,
-    EfficientNet_V2_L_Weights,
-)
+from torchvision.models import EfficientNet_V2_S_Weights
 
 
 class SkinLesionClassifier(nn.Module):
     """
-    EfficientNet-V2 based classifier for skin lesion classification.
+    EfficientNet-V2 Small based classifier for skin lesion classification.
     
     This model uses a pretrained EfficientNet-V2 backbone with a custom
     classification head optimized for the HAM10000 dataset.
@@ -36,7 +32,6 @@ class SkinLesionClassifier(nn.Module):
     def __init__(
         self,
         num_classes: int = 7,
-        model_size: Literal["small", "medium", "large"] = "small",
         pretrained: bool = True,
         dropout_rate: float = 0.3,
         freeze_backbone: bool = False,
@@ -48,7 +43,6 @@ class SkinLesionClassifier(nn.Module):
         
         Args:
             num_classes: Number of output classes
-            model_size: Size of EfficientNet-V2 model (small, medium, large)
             pretrained: Whether to use pretrained ImageNet weights
             dropout_rate: Dropout rate for regularization
             freeze_backbone: Whether to freeze all backbone layers
@@ -58,13 +52,10 @@ class SkinLesionClassifier(nn.Module):
         super().__init__()
         
         self.num_classes = num_classes
-        self.model_size = model_size
         self.head_type = head_type
         
-        # Load pretrained backbone
-        self.backbone, self.feature_dim = self._create_backbone(
-            model_size, pretrained
-        )
+        # Load pretrained backbone (EfficientNet-V2 Small)
+        self.backbone, self.feature_dim = self._create_backbone(pretrained)
         
         if head_type == "acrnn":
             from .acrnn import ACRNN
@@ -93,24 +84,11 @@ class SkinLesionClassifier(nn.Module):
         elif freeze_layers is not None:
             self._freeze_layers(freeze_layers)
     
-    def _create_backbone(
-        self, model_size: str, pretrained: bool
-    ) -> Tuple[nn.Module, int]:
-        """Create the EfficientNet-V2 backbone."""
-        if model_size == "small":
-            weights = EfficientNet_V2_S_Weights.IMAGENET1K_V1 if pretrained else None
-            backbone = models.efficientnet_v2_s(weights=weights)
-            feature_dim = 1280
-        elif model_size == "medium":
-            weights = EfficientNet_V2_M_Weights.IMAGENET1K_V1 if pretrained else None
-            backbone = models.efficientnet_v2_m(weights=weights)
-            feature_dim = 1280
-        elif model_size == "large":
-            weights = EfficientNet_V2_L_Weights.IMAGENET1K_V1 if pretrained else None
-            backbone = models.efficientnet_v2_l(weights=weights)
-            feature_dim = 1280
-        else:
-            raise ValueError(f"Unknown model size: {model_size}")
+    def _create_backbone(self, pretrained: bool) -> Tuple[nn.Module, int]:
+        """Create the EfficientNet-V2 Small backbone."""
+        weights = EfficientNet_V2_S_Weights.IMAGENET1K_V1 if pretrained else None
+        backbone = models.efficientnet_v2_s(weights=weights)
+        feature_dim = 1280
         
         # Remove the original classifier
         backbone.classifier = nn.Identity()
@@ -329,7 +307,6 @@ class LabelSmoothingCrossEntropy(nn.Module):
 
 def create_model(
     num_classes: int = 7,
-    model_size: Literal["small", "medium", "large"] = "small",
     pretrained: bool = True,
     dropout_rate: float = 0.3,
     freeze_backbone: bool = False,
@@ -340,18 +317,16 @@ def create_model(
     
     Args:
         num_classes: Number of output classes
-        model_size: Size of EfficientNet-V2 backbone
         pretrained: Whether to use pretrained weights
         dropout_rate: Dropout rate for regularization
         freeze_backbone: Whether to freeze backbone layers
         head_type: Type of classification head ("simple" or "acrnn")
         
     Returns:
-        Configured SkinLesionClassifier model
+        Configured SkinLesionClassifier model (EfficientNet-V2 Small backbone)
     """
     return SkinLesionClassifier(
         num_classes=num_classes,
-        model_size=model_size,
         pretrained=pretrained,
         dropout_rate=dropout_rate,
         freeze_backbone=freeze_backbone,
