@@ -8,10 +8,20 @@ An educational skin lesion image classification system using EfficientNet-V2 and
 
 This project demonstrates how to build a modern, maintainable, and reproducible deep learning system for multi-class skin lesion classification. Key features include:
 
-- **EfficientNet-V2 backbone** with transfer learning (small, medium, large variants)
+- **EfficientNet-V2 Small backbone** with transfer learning
 - **Multiple classification heads**:
   - Simple: Multi-layer perceptron with BatchNorm and Dropout
   - ACRNN: Attention-based Convolutional Recurrent Neural Network
+- **Advanced data augmentation**:
+  - Mixup: Probabilistic blending of images and labels
+  - CutMix: Spatial patch mixing with area-proportional labels
+  - Domain-specific augmentations for dermatoscopy
+- **Model optimization**:
+  - ModelEMA (Exponential Moving Average) for better generalization
+  - Two-stage training with separate learning rates
+- **Robust inference strategies**:
+  - **Test-Time Augmentation (TTA)**: Multiple augmented predictions with aggregation
+  - **Ensemble Prediction**: Multi-model voting with uncertainty quantification
 - **Lesion-aware data splitting** to prevent data leakage via `lesion_id` grouping
 - **Class-imbalanced learning**:
   - Multiple loss functions (Cross-Entropy, Focal Loss, Label Smoothing)
@@ -181,8 +191,7 @@ Key settings in `config.yaml`:
 
 ```yaml
 model:
-  name: efficientnet_v2
-  size: small              # Options: small, medium, large
+  name: efficientnet_v2    # EfficientNet-V2 Small
   pretrained: true         # Use ImageNet pretrained weights
   head_type: simple        # Options: simple, acrnn
   dropout_rate: 0.35       # Dropout for regularization
@@ -233,6 +242,195 @@ python scripts/check_fit.py outputs/run_20260205_120000/training_history.json
 python scripts/benchmark.py --num-batches 50
 ```
 
+### Training an Ensemble
+
+An **ensemble** combines multiple independently trained models to improve accuracy and robustness. Train multiple models with diverse configurations:
+
+#### Automated Ensemble Training (Recommended)
+
+Use the provided scripts to automatically train 3 models with different random seeds:
+
+**Python Script (Cross-platform):**
+```bash
+# Train ensemble with default seeds (7, 13, 21)
+python scripts/train_ensemble.py
+
+# Train ensemble with custom output directory
+python scripts/train_ensemble.py --output outputs/my_ensemble
+
+# Train ensemble with custom seeds
+python scripts/train_ensemble.py --seeds 10 20 30
+```
+
+**Bash Script (Unix/macOS/Linux):**
+```bash
+# Train ensemble with auto-generated output directory
+bash scripts/train_ensemble.sh
+
+# Train ensemble with custom output directory
+bash scripts/train_ensemble.sh outputs/my_ensemble
+```
+
+Both scripts will:
+- Train 3 models with different random seeds for diversity
+- Save all models in organized subdirectories
+- Create evaluation and inference convenience scripts
+- Generate ensemble metadata (JSON)
+
+After training completes, the scripts create:
+- `ensemble_metadata.json` - Ensemble configuration details
+- `evaluate_ensemble.sh` - Ready-to-use evaluation script
+- `predict_ensemble.sh` - Ready-to-use inference script
+
+**Example output structure:**
+```
+outputs/ensemble_20260209_152530/
+├── ensemble_metadata.json
+├── evaluate_ensemble.sh
+├── predict_ensemble.sh
+├── model_1/
+│   ├── checkpoint_best.pt
+│   ├── config.yaml
+│   └── ...
+├── model_2/
+│   ├── checkpoint_best.pt
+│   └── ...
+└── model_3/
+    ├── checkpoint_best.pt
+    └── ...
+```
+
+#### Manual Ensemble Training
+
+Alternatively, train models manually with different configurations:
+
+#### Strategy 1: Different Random Seeds
+
+Train multiple models with the same architecture but different seeds:
+
+```bash
+# Model 1 (seed=7)
+python src/train.py --config config.yaml --output outputs/ensemble_model_1
+
+# Model 2 (seed=13) - edit config.yaml: training.seed = 13
+python src/train.py --config config.yaml --output outputs/ensemble_model_2
+
+# Model 3 (seed=21) - edit config.yaml: training.seed = 21
+python src/train.py --config config.yaml --output outputs/ensemble_model_3
+```
+
+#### Strategy 2: Different Classification Heads
+
+Train models with different head architectures:
+
+```bash
+# Simple head (default)
+# Edit config.yaml: model.head_type = "simple"
+python src/train.py --config config.yaml --output outputs/ensemble_simple
+
+# ACRNN head (attention-based)
+# Edit config.yaml: model.head_type = "acrnn"
+python src/train.py --config config.yaml --output outputs/ensemble_acrnn
+```
+
+#### Strategy 3: Different Augmentation Levels
+
+Train models with varying augmentation intensities:
+
+```bash
+# Light augmentation
+# Edit config.yaml: training.augmentation = "light"
+python src/train.py --config config.yaml --output outputs/ensemble_light_aug
+
+# Heavy augmentation
+# Edit config.yaml: training.augmentation = "heavy"
+python src/train.py --config config.yaml --output outputs/ensemble_heavy_aug
+
+# Domain augmentation
+# Edit config.yaml: training.augmentation = "domain"
+python src/train.py --config config.yaml --output outputs/ensemble_domain_aug
+```
+
+#### Strategy 4: Advanced Augmentation Techniques
+
+Use Mixup, CutMix, or Model EMA for diversity:
+
+```bash
+# Model with Mixup
+# Edit config.yaml: training.mixup.enabled = true, training.mixup.alpha = 1.0
+python src/train.py --config config.yaml --output outputs/ensemble_mixup
+
+# Model with CutMix
+# Edit config.yaml: training.cutmix.enabled = true, training.cutmix.alpha = 1.0
+python src/train.py --config config.yaml --output outputs/ensemble_cutmix
+
+# Model with both (50/50 probability)
+# Edit config.yaml: mixup.enabled = true, cutmix.enabled = true, mixup_prob = 0.5
+python src/train.py --config config.yaml --output outputs/ensemble_mixed
+
+# Model with EMA
+# Edit config.yaml: training.ema.enabled = true, training.ema.decay = 0.9999
+python src/train.py --config config.yaml --output outputs/ensemble_ema
+```
+
+#### Best Practices for Ensembles
+
+- **Diversity is key**: Models should differ in architecture, hyperparameters, or training strategy
+- **3-5 models**: Sweet spot for performance vs. computational cost
+- **Use best checkpoints**: Always use `checkpoint_best.pt` for each model
+- **Monitor individual performance**: Ensure each model performs well independently (ensemble won't fix bad models)
+- **Different splits (optional)**: Vary `data.split_seed` for completely independent train/val/test splits
+- **Complementary strengths**: Combine models that excel at different aspects (e.g., one with high precision, one with high recall)
+
+#### Using Your Trained Ensemble
+
+After training multiple models, use them together:
+
+**If you used the automated training scripts**, convenience scripts are already created:
+
+```bash
+# Evaluate ensemble (uses auto-generated script)
+bash outputs/ensemble_YYYYMMDD_HHMMSS/evaluate_ensemble.sh
+
+# Evaluate with TTA
+bash outputs/ensemble_YYYYMMDD_HHMMSS/evaluate_ensemble.sh --use-tta --tta-mode medium
+
+# Predict on an image
+bash outputs/ensemble_YYYYMMDD_HHMMSS/predict_ensemble.sh path/to/image.jpg
+```
+
+**Manual ensemble usage:**
+
+```bash
+# Evaluate ensemble
+python src/evaluate.py \
+    --checkpoint \
+        outputs/ensemble_model_1/checkpoint_best.pt \
+        outputs/ensemble_model_2/checkpoint_best.pt \
+        outputs/ensemble_model_3/checkpoint_best.pt \
+    --test-csv outputs/ensemble_model_1/test_split.csv \
+    --images-dir data/HAM10000/images \
+    --output evaluation_ensemble
+
+# Inference with ensemble
+python src/inference.py \
+    --ensemble \
+    --checkpoint \
+        outputs/ensemble_model_1/checkpoint_best.pt \
+        outputs/ensemble_model_2/checkpoint_best.pt \
+    --image path/to/image.jpg
+
+# Combine ensemble + TTA for maximum robustness
+python src/evaluate.py \
+    --checkpoint \
+        outputs/ensemble_model_1/checkpoint_best.pt \
+        outputs/ensemble_model_2/checkpoint_best.pt \
+    --test-csv outputs/ensemble_model_1/test_split.csv \
+    --images-dir data/HAM10000/images \
+    --use-tta --tta-mode medium \
+    --output evaluation_ensemble_tta
+```
+
 ## Evaluation
 
 After training, evaluate the model on the test set:
@@ -244,6 +442,69 @@ python src/evaluate.py \
     --images-dir data/HAM10000/images \
     --output evaluation_results
 ```
+
+### Test-Time Augmentation (TTA)
+
+Improve prediction robustness by averaging predictions across multiple augmented versions:
+
+```bash
+python src/evaluate.py \
+    --checkpoint outputs/run_xxx/checkpoint_best.pt \
+    --test-csv outputs/run_xxx/test_split.csv \
+    --images-dir data/HAM10000/images \
+    --use-tta \
+    --tta-mode medium \
+    --tta-aggregation mean \
+    --output evaluation_tta
+```
+
+**TTA Modes:**
+- `light`: 4 augmentations (horizontal/vertical flips)
+- `medium`: 8 augmentations (adds rotations 90°/270°)
+- `full`: All available augmentations (adds small rotations ±15°)
+
+**Aggregation Methods:**
+- `mean`: Arithmetic average of probabilities (default)
+- `geometric_mean`: Geometric average (emphasizes agreement)
+- `max`: Maximum probability across augmentations
+
+### Ensemble Prediction
+
+Combine multiple models for improved accuracy and uncertainty quantification:
+
+```bash
+python src/evaluate.py \
+    --checkpoint \
+        outputs/run_1/checkpoint_best.pt \
+        outputs/run_2/checkpoint_best.pt \
+        outputs/run_3/checkpoint_best.pt \
+    --test-csv outputs/run_1/test_split.csv \
+    --images-dir data/HAM10000/images \
+    --ensemble-aggregation weighted_mean \
+    --output evaluation_ensemble
+```
+
+**Ensemble Aggregation Methods:**
+- `mean`: Uniform averaging (all models equal weight)
+- `weighted_mean`: Weight by validation performance (default)
+- `geometric_mean`: Geometric average (robust to outliers)
+
+### Combined TTA + Ensemble
+
+For maximum robustness, combine both techniques:
+
+```bash
+python src/evaluate.py \
+    --checkpoint outputs/run_1/checkpoint_best.pt outputs/run_2/checkpoint_best.pt \
+    --test-csv outputs/run_1/test_split.csv \
+    --images-dir data/HAM10000/images \
+    --use-tta \
+    --tta-mode medium \
+    --ensemble-aggregation weighted_mean \
+    --output evaluation_combined
+```
+
+### Evaluation Outputs
 
 This generates:
 - `evaluation_metrics.json` - All metrics in JSON format (accuracy, precision, recall, F1, AUC)
@@ -283,11 +544,101 @@ for class_name, prob in result['probabilities'].items():
     print(f"{class_name}: {prob:.3f}")
 ```
 
+### Test-Time Augmentation (TTA)
+
+Improve prediction reliability with TTA:
+
+```python
+from src.inference import SkinLesionPredictor
+
+predictor = SkinLesionPredictor("outputs/run_xxx/checkpoint_best.pt")
+
+# Predict with TTA
+result = predictor.predict_with_tta(
+    "path/to/image.jpg",
+    mode="medium",  # light, medium, or full
+    aggregation="mean"  # mean, geometric_mean, or max
+)
+
+print(f"TTA Predicted: {result['predicted_class']}")
+print(f"TTA Confidence: {result['confidence']:.2%}")
+print(f"Uncertainty: {result['uncertainty']:.4f}")  # Std dev across augmentations
+```
+
+### Ensemble Prediction
+
+Combine multiple models for robust predictions:
+
+```python
+from src.inference import load_ensemble_predictor
+
+# Load ensemble from multiple checkpoints
+ensemble = load_ensemble_predictor([
+    "outputs/run_1/checkpoint_best.pt",
+    "outputs/run_2/checkpoint_best.pt",
+    "outputs/run_3/checkpoint_best.pt"
+])
+
+# Predict with ensemble
+result = ensemble.predict(
+    "path/to/image.jpg",
+    aggregation="weighted_mean"  # mean, weighted_mean, or geometric_mean
+)
+
+print(f"Ensemble Predicted: {result['predicted_class']}")
+print(f"Ensemble Confidence: {result['confidence']:.2%}")
+print(f"Model Agreement: {result['uncertainty']:.4f}")  # Std dev across models
+```
+
+### Combined TTA + Ensemble
+
+For maximum robustness:
+
+```python
+from src.inference import load_ensemble_predictor
+
+ensemble = load_ensemble_predictor([
+    "outputs/run_1/checkpoint_best.pt",
+    "outputs/run_2/checkpoint_best.pt",
+])
+
+# Each model uses TTA, then ensemble aggregates
+result = ensemble.predict_with_tta(
+    "path/to/image.jpg",
+    tta_mode="medium",
+    tta_aggregation="mean",
+    ensemble_aggregation="weighted_mean"
+)
+
+print(f"Combined Predicted: {result['predicted_class']}")
+print(f"Combined Confidence: {result['confidence']:.2%}")
+```
+
 ### Command Line Inference
 
+**Standard Prediction:**
 ```bash
 python src/inference.py \
     --checkpoint outputs/run_xxx/checkpoint_best.pt \
+    --image path/to/image.jpg
+```
+
+**With TTA:**
+```bash
+python src/inference.py \
+    --checkpoint outputs/run_xxx/checkpoint_best.pt \
+    --image path/to/image.jpg \
+    --use-tta \
+    --tta-mode medium
+```
+
+**Ensemble Prediction:**
+```bash
+python src/inference.py \
+    --ensemble \
+    --checkpoint \
+        outputs/run_1/checkpoint_best.pt \
+        outputs/run_2/checkpoint_best.pt \
     --image path/to/image.jpg
 ```
 
@@ -303,6 +654,7 @@ image_paths = ["img1.jpg", "img2.jpg", "img3.jpg"]
 for img_path in image_paths:
     result = predictor.predict(img_path)
     print(f"{img_path}: {result['predicted_class']} ({result['confidence']:.2%})")
+```
 ```
 
 ## Model Architecture
@@ -352,16 +704,6 @@ The classifier uses **EfficientNet-V2** as the backbone with a custom classifica
      - Cycles learning rate for better exploration
      - Warm restarts every 20 epochs
      - 5% warmup at start
-
-### Model Variants
-
-| Size | Parameters | Feature Dim | Image Size | GPU Memory | Speed |
-|------|------------|-------------|------------|------------|-------|
-| small | ~21M | 1280 | 224×224 | ~4 GB | Fast |
-| medium | ~54M | 1280 | 224×224 | ~8 GB | Medium |
-| large | ~118M | 1280 | 224×224 | ~16 GB | Slow |
-
-**Recommendation**: Start with `small` for fast iteration, use `medium` or `large` for final production models.
 
 ## Technical Details
 
