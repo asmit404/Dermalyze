@@ -673,7 +673,10 @@ def train(
         stage2_weight_decay = train_config.get("stage2_weight_decay", 0.02)
         lr = stage1_lr  # Start with stage 1 lr
         weight_decay = stage1_weight_decay
-        logger.info(f"Two-stage training: Stage1={stage1_epochs} epochs (lr={stage1_lr}), Stage2={stage2_epochs} epochs (lr={stage2_lr})")
+        logger.info(f"Two-stage training enabled:")
+        logger.info(f"  • Stage 1 (Warm-up): {stage1_epochs} epochs, lr={stage1_lr}, wd={stage1_weight_decay}")
+        logger.info(f"  • Stage 2 (Fine-tuning): {stage2_epochs} epochs, lr={stage2_lr}, wd={stage2_weight_decay}")
+        logger.info(f"  • Total: {epochs} epochs")
     else:
         epochs = train_config.get("epochs", 30)
         lr = train_config.get("lr", 1e-4)
@@ -883,7 +886,8 @@ def train(
         # Two-stage training: transition to stage 2
         if use_two_stage and epoch == stage1_epochs and epoch > start_epoch:
             logger.info("\n" + "="*70)
-            logger.info(f"STAGE TRANSITION: Moving from Stage 1 to Stage 2")
+            logger.info(f"STAGE TRANSITION: Warm-up Complete → Starting Fine-tuning")
+            logger.info(f"Completed {stage1_epochs} warm-up epochs, starting {stage2_epochs} fine-tuning epochs")
             logger.info(f"Updating LR: {stage1_lr} -> {stage2_lr}")
             logger.info(f"Updating Weight Decay: {stage1_weight_decay} -> {stage2_weight_decay}")
             logger.info("="*70 + "\n")
@@ -921,7 +925,8 @@ def train(
             current_stage = 1 if epoch < stage1_epochs else 2
             stage_epoch = epoch + 1 if current_stage == 1 else epoch - stage1_epochs + 1
             stage_total = stage1_epochs if current_stage == 1 else stage2_epochs
-            stage_info = f" | Stage {current_stage} [{stage_epoch}/{stage_total}]"
+            stage_name = "Warm-up" if current_stage == 1 else "Fine-tuning"
+            stage_info = f" | {stage_name} Stage {current_stage} [{stage_epoch}/{stage_total}]"
         logger.info(f"\nEpoch {epoch + 1}/{epochs}{stage_info} | LR: {current_lr:.2e}")
         
         # Train
