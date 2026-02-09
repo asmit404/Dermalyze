@@ -14,6 +14,7 @@ based skin lesion classifier, including:
 from __future__ import annotations
 
 import argparse
+import copy
 import logging
 import os
 import random
@@ -53,6 +54,195 @@ logging.basicConfig(
     handlers=[logging.StreamHandler()],
 )
 logger = logging.getLogger(__name__)
+
+
+class Mixup:
+    """Mixup data augmentation.
+    
+    Reference: https://arxiv.org/abs/1710.09412
+    """
+    
+    def __init__(self, alpha: float = 1.0, num_classes: int = 7):
+        """
+        Args:
+            alpha: Beta distribution parameter for mixup
+            num_classes: Number of classes for one-hot encoding
+        """
+        self.alpha = alpha
+        self.num_classes = num_classes
+    
+    def __call__(
+        self,
+        images: torch.Tensor,
+        targets: torch.Tensor,
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, float]:
+        """
+        Apply mixup to a batch.
+        
+        Returns:
+            mixed_images: Mixed images
+            targets_a: First set of targets
+            targets_b: Second set of targets  
+            lam: Mixing coefficient
+        """
+        if self.alpha > 0:
+            lam = np.random.beta(self.alpha, self.alpha)
+        else:
+            lam = 1.0
+        
+        batch_size = images.size(0)
+        index = torch.randperm(batch_size, device=images.device)
+        
+        mixed_images = lam * images + (1 - lam) * images[index]
+        targets_a = targets
+        targets_b = targets[index]
+        
+        return mixed_images, targets_a, targets_b, lam
+
+
+class CutMix:
+    """CutMix data augmentation.
+    
+    Reference: https://arxiv.org/abs/1905.04899
+    """
+    
+    def __init__(self, alpha: float = 1.0, num_classes: int = 7):
+        """
+        Args:
+            alpha: Beta distribution parameter for cutmix
+            num_classes: Number of classes for one-hot encoding
+        """
+        self.alpha = alpha
+        self.num_classes = num_classes
+    
+    def __call__(
+        self,
+        images: torch.Tensor,
+        targets: torch.Tensor,
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, float]:
+        """
+        Apply cutmix to a batch.
+        
+        Returns:
+            mixed_images: Mixed images with cut patches
+            targets_a: First set of targets
+            targets_b: Second set of targets
+            lam: Mixing coefficient based on box area
+        """
+        if self.alpha > 0:
+            lam = np.random.beta(self.alpha, self.alpha)
+        else:
+            lam = 1.0
+        
+        batch_size = images.size(0)
+        index = torch.randperm(batch_size, device=images.device)
+        
+        # Get image dimensions
+        _, _, h, w = images.size()
+        
+        # Calculate box coordinates
+        cut_ratio = np.sqrt(1.0 - lam)
+        cut_h = int(h * cut_ratio)
+        cut_w = int(w * cut_ratio)
+        
+        # Random center point
+        cx = np.random.randint(w)
+        cy = np.random.randint(h)
+        
+        # Box coordinates
+        x1 = np.clip(cx - cut_w // 2, 0, w)
+        y1 = np.clip(cy - cut_h // 2, 0, h)
+        x2 = np.clip(cx + cut_w // 2, 0, w)
+        y2 = np.clip(cy + cut_h // 2, 0, h)
+        
+        # Apply cutmix
+        mixed_images = images.clone()
+        mixed_images[:, :, y1:y2, x1:x2] = images[index, :, y1:y2, x1:x2]
+        
+        # Adjust lambda based on actual box area
+        lam = 1 - ((x2 - x1) * (y2 - y1) / (w * h))
+        
+        targets_a = targets
+        targets_b = targets[index]
+        
+        return mixed_images, targets_a, targets_b, lam
+
+
+class ModelEMA:
+    """Exponential Moving Average of model parameters.
+    
+    Maintains a moving average of model weights for better generalization.
+    Reference: https://www.tensorflow.org/api_docs/python/tf/train/ExponentialMovingAverage
+    """
+    
+    def __init__(
+        self,
+        model: nn.Module,
+        decay: float = 0.9999,
+        device: Optional[torch.device] = None,
+    ):
+        """
+        Args:
+            model: Model to track
+            decay: Decay rate for EMA (typically 0.999 - 0.9999)
+            device: Device to store EMA model on
+        """
+        self.module = copy.deepcopy(model)
+        self.module.eval()
+        self.decay = decay
+        self.device = device
+        
+        if self.device is not None:
+            self.module.to(device=device)
+        
+        # Freeze EMA parameters
+        for param in self.module.parameters():
+            param.requires_grad_(False)
+    
+    def _update(self, model: nn.Module, update_fn):
+        """Update EMA parameters."""
+        with torch.no_grad():
+            for ema_param, model_param in zip(
+                self.module.state_dict().values(),
+                model.state_dict().values(),
+            ):
+                if ema_param.dtype.is_floating_point:
+                    update_fn(ema_param, model_param)
+    
+    def update(self, model: nn.Module):
+        """Update EMA parameters with current model."""
+        self._update(
+            model,
+            update_fn=lambda e, m: e.copy_(
+                self.decay * e + (1.0 - self.decay) * m
+            ),
+        )
+    
+    def set(self, model: nn.Module):
+        """Set EMA parameters to current model parameters."""
+        self._update(
+            model,
+            update_fn=lambda e, m: e.copy_(m),
+        )
+    
+    def state_dict(self):
+        """Return EMA model state dict."""
+        return self.module.state_dict()
+    
+    def load_state_dict(self, state_dict):
+        """Load EMA model state dict."""
+        self.module.load_state_dict(state_dict)
+
+
+def mixup_criterion(
+    criterion: nn.Module,
+    outputs: torch.Tensor,
+    targets_a: torch.Tensor,
+    targets_b: torch.Tensor,
+    lam: float,
+) -> torch.Tensor:
+    """Calculate loss for mixup/cutmix."""
+    return lam * criterion(outputs, targets_a) + (1 - lam) * criterion(outputs, targets_b)
 
 
 def set_seed(seed: int, fast_mode: bool = False) -> None:
@@ -190,6 +380,10 @@ def train_one_epoch(
     scheduler: Optional[Any] = None,
     epoch: int = 0,
     use_amp: bool = True,
+    mixup: Optional[Mixup] = None,
+    cutmix: Optional[CutMix] = None,
+    mixup_prob: float = 0.5,
+    model_ema: Optional[ModelEMA] = None,
 ) -> Dict[str, float]:
     """
     Train the model for one epoch.
@@ -204,6 +398,10 @@ def train_one_epoch(
         scheduler: Learning rate scheduler (if using OneCycleLR)
         epoch: Current epoch number
         use_amp: Whether to use automatic mixed precision
+        mixup: Mixup augmentation instance
+        cutmix: CutMix augmentation instance
+        mixup_prob: Probability of applying mixup vs cutmix
+        model_ema: ModelEMA instance for exponential moving average
         
     Returns:
         Dictionary of training metrics
@@ -214,11 +412,30 @@ def train_one_epoch(
     # Use non_blocking only for CUDA
     non_blocking = device.type == "cuda"
     
+    # Determine if we should use mixup/cutmix
+    use_augmentation = mixup is not None or cutmix is not None
+    
     pbar = tqdm(train_loader, desc=f"Epoch {epoch} [Train]", leave=False)
     
     for batch_idx, (images, targets) in enumerate(pbar):
         images = images.to(device, non_blocking=non_blocking)
         targets = targets.to(device, non_blocking=non_blocking)
+        
+        # Apply Mixup or CutMix
+        if use_augmentation:
+            if mixup is not None and cutmix is not None:
+                # Randomly choose between mixup and cutmix
+                if np.random.rand() < mixup_prob:
+                    images, targets_a, targets_b, lam = mixup(images, targets)
+                else:
+                    images, targets_a, targets_b, lam = cutmix(images, targets)
+            elif mixup is not None:
+                images, targets_a, targets_b, lam = mixup(images, targets)
+            else:
+                images, targets_a, targets_b, lam = cutmix(images, targets)
+            use_mixed_loss = True
+        else:
+            use_mixed_loss = False
         
         optimizer.zero_grad(set_to_none=True)
         
@@ -226,7 +443,10 @@ def train_one_epoch(
         if use_amp and device.type == "cuda":
             with autocast(device_type="cuda"):
                 outputs = model(images)
-                loss = criterion(outputs, targets)
+                if use_mixed_loss:
+                    loss = mixup_criterion(criterion, outputs, targets_a, targets_b, lam)
+                else:
+                    loss = criterion(outputs, targets)
             
             # Backward pass with gradient scaling
             scaler.scale(loss).backward()
@@ -237,18 +457,29 @@ def train_one_epoch(
         else:
             # Standard training (MPS and CPU)
             outputs = model(images)
-            loss = criterion(outputs, targets)
+            if use_mixed_loss:
+                loss = mixup_criterion(criterion, outputs, targets_a, targets_b, lam)
+            else:
+                loss = criterion(outputs, targets)
             loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
             optimizer.step()
+        
+        # Update ModelEMA
+        if model_ema is not None:
+            model_ema.update(model)
         
         # Update learning rate if using OneCycleLR
         if scheduler is not None and isinstance(scheduler, OneCycleLR):
             scheduler.step()
         
-        # Update metrics
+        # Update metrics (use original targets for metric computation)
         preds = torch.argmax(outputs, dim=1)
-        metrics.update(loss.item(), preds, targets)
+        if use_mixed_loss:
+            # For mixed samples, use the primary target for accuracy
+            metrics.update(loss.item(), preds, targets_a)
+        else:
+            metrics.update(loss.item(), preds, targets)
         
         # Update progress bar
         current_metrics = metrics.compute()
@@ -317,6 +548,7 @@ def save_checkpoint(
     config: Dict[str, Any],
     output_dir: Path,
     is_best: bool = False,
+    model_ema: Optional[ModelEMA] = None,
 ) -> None:
     """Save model checkpoint."""
     checkpoint = {
@@ -327,6 +559,10 @@ def save_checkpoint(
         "metrics": metrics,
         "config": config,
     }
+    
+    # Add EMA state if available
+    if model_ema is not None:
+        checkpoint["model_ema_state_dict"] = model_ema.state_dict()
     
     # Save latest checkpoint
     checkpoint_path = output_dir / "checkpoint_latest.pt"
@@ -350,6 +586,7 @@ def load_checkpoint(
     model: nn.Module,
     optimizer: Optional[torch.optim.Optimizer] = None,
     scheduler: Optional[Any] = None,
+    model_ema: Optional[ModelEMA] = None,
 ) -> Tuple[int, Dict[str, float]]:
     """Load model checkpoint."""
     checkpoint = torch.load(checkpoint_path, map_location="cpu")
@@ -361,6 +598,12 @@ def load_checkpoint(
     
     if scheduler is not None and checkpoint.get("scheduler_state_dict"):
         scheduler.load_state_dict(checkpoint["scheduler_state_dict"])
+    
+    if model_ema is not None:
+        if "model_ema_state_dict" in checkpoint:
+            model_ema.load_state_dict(checkpoint["model_ema_state_dict"])
+        else:
+            model_ema.set(model)
     
     return checkpoint["epoch"], checkpoint.get("metrics", {})
 
@@ -395,12 +638,13 @@ def train(
     
     # Load and split data
     logger.info("Loading and splitting data...")
+    split_seed = data_config.get("split_seed", seed)  # Allow separate split seed
     train_df, val_df, test_df = load_and_split_data(
         labels_csv=labels_csv,
         images_dir=images_dir,
         val_size=data_config.get("val_size", 0.15),
         test_size=data_config.get("test_size", 0.15),
-        random_state=seed,
+        random_state=split_seed,
         lesion_aware=data_config.get("lesion_aware", True),
     )
     
@@ -416,9 +660,25 @@ def train(
     # Extract training config values
     batch_size = train_config.get("batch_size", 32)
     num_workers = train_config.get("num_workers", 4)
-    epochs = train_config.get("epochs", 30)
-    lr = train_config.get("lr", 1e-4)
-    weight_decay = train_config.get("weight_decay", 0.01)
+    
+    # Two-stage training support
+    use_two_stage = "stage1_epochs" in train_config and "stage2_epochs" in train_config
+    if use_two_stage:
+        stage1_epochs = train_config.get("stage1_epochs", 5)
+        stage2_epochs = train_config.get("stage2_epochs", 25)
+        epochs = stage1_epochs + stage2_epochs
+        stage1_lr = train_config.get("stage1_lr", 1e-3)
+        stage2_lr = train_config.get("stage2_lr", 1e-4)
+        stage1_weight_decay = train_config.get("stage1_weight_decay", 0.01)
+        stage2_weight_decay = train_config.get("stage2_weight_decay", 0.02)
+        lr = stage1_lr  # Start with stage 1 lr
+        weight_decay = stage1_weight_decay
+        logger.info(f"Two-stage training: Stage1={stage1_epochs} epochs (lr={stage1_lr}), Stage2={stage2_epochs} epochs (lr={stage2_lr})")
+    else:
+        epochs = train_config.get("epochs", 30)
+        lr = train_config.get("lr", 1e-4)
+        weight_decay = train_config.get("weight_decay", 0.01)
+    
     use_amp = train_config.get("use_amp", True) and device.type == "cuda"
     
     # Create DataLoaders
@@ -462,6 +722,7 @@ def train(
         head_type=head_type,
     )
     model = model.to(device)
+    base_model = model
     
     # Enable torch.compile for PyTorch 2.0+ (skip for MPS due to potential backward pass issues)
     use_compile = train_config.get("use_torch_compile", True)
@@ -535,6 +796,41 @@ def train(
     # Initialize gradient scaler for mixed precision
     scaler = GradScaler() if use_amp else None
     
+    # Initialize Mixup and CutMix
+    mixup_config = train_config.get("mixup", {})
+    cutmix_config = train_config.get("cutmix", {})
+    
+    mixup = None
+    cutmix = None
+    mixup_prob = 0.5
+    
+    if mixup_config.get("enabled", False):
+        mixup_alpha = mixup_config.get("alpha", 1.0)
+        mixup = Mixup(alpha=mixup_alpha, num_classes=model_config.get("num_classes", 7))
+        logger.info(f"Mixup enabled with alpha={mixup_alpha}")
+    
+    if cutmix_config.get("enabled", False):
+        cutmix_alpha = cutmix_config.get("alpha", 1.0)
+        cutmix = CutMix(alpha=cutmix_alpha, num_classes=model_config.get("num_classes", 7))
+        logger.info(f"CutMix enabled with alpha={cutmix_alpha}")
+    
+    if mixup is not None and cutmix is not None:
+        mixup_prob = train_config.get("mixup_prob", 0.5)
+        logger.info(f"Using both Mixup and CutMix with mixup_prob={mixup_prob}")
+    
+    # Initialize ModelEMA
+    model_ema = None
+    ema_config = train_config.get("ema", {})
+    use_ema_for_eval = ema_config.get("use_for_eval", ema_config.get("validate_ema", True))
+    save_ema_best = ema_config.get("save_best", True)
+    
+    if ema_config.get("enabled", False):
+        ema_decay = ema_config.get("decay", 0.9999)
+        ema_source = base_model if model is not base_model else model
+        model_ema = ModelEMA(ema_source, decay=ema_decay, device=device)
+        model_ema.set(model)
+        logger.info(f"ModelEMA enabled with decay={ema_decay}, use_for_eval={use_ema_for_eval}, save_best={save_ema_best}")
+    
     # Early stopping
     early_stopping = EarlyStopping(
         patience=train_config.get("early_stopping_patience", 15),
@@ -550,7 +846,7 @@ def train(
     if resume_from is not None and resume_from.exists():
         logger.info(f"Resuming from checkpoint: {resume_from}")
         start_epoch, prev_metrics = load_checkpoint(
-            resume_from, model, optimizer, scheduler
+            resume_from, model, optimizer, scheduler, model_ema
         )
         start_epoch += 1
         
@@ -585,9 +881,49 @@ def train(
     for epoch in range(start_epoch, epochs):
         epoch_start = time.time()
         
+        # Two-stage training: transition to stage 2
+        if use_two_stage and epoch == stage1_epochs and epoch > start_epoch:
+            logger.info("\n" + "="*70)
+            logger.info(f"STAGE TRANSITION: Moving from Stage 1 to Stage 2")
+            logger.info(f"Updating LR: {stage1_lr} -> {stage2_lr}")
+            logger.info(f"Updating Weight Decay: {stage1_weight_decay} -> {stage2_weight_decay}")
+            logger.info("="*70 + "\n")
+            
+            # Recreate optimizer with stage 2 parameters
+            optimizer = AdamW(
+                model.parameters(),
+                lr=stage2_lr,
+                weight_decay=stage2_weight_decay,
+                betas=(0.9, 0.999),
+            )
+            
+            # Recreate scheduler for stage 2
+            if scheduler_type == "onecycle":
+                scheduler = OneCycleLR(
+                    optimizer,
+                    max_lr=stage2_lr,
+                    epochs=stage2_epochs,
+                    steps_per_epoch=len(train_loader),
+                    pct_start=scheduler_config.get("warmup_pct", 0.1),
+                    anneal_strategy="cos",
+                )
+            else:  # cosine
+                scheduler = CosineAnnealingWarmRestarts(
+                    optimizer,
+                    T_0=scheduler_config.get("T_0", 10),
+                    T_mult=scheduler_config.get("T_mult", 2),
+                    eta_min=scheduler_config.get("eta_min", 1e-6),
+                )
+        
         # Get current learning rate
         current_lr = optimizer.param_groups[0]["lr"]
-        logger.info(f"\nEpoch {epoch + 1}/{epochs} | LR: {current_lr:.2e}")
+        stage_info = ""
+        if use_two_stage:
+            current_stage = 1 if epoch < stage1_epochs else 2
+            stage_epoch = epoch + 1 if current_stage == 1 else epoch - stage1_epochs + 1
+            stage_total = stage1_epochs if current_stage == 1 else stage2_epochs
+            stage_info = f" | Stage {current_stage} [{stage_epoch}/{stage_total}]"
+        logger.info(f"\nEpoch {epoch + 1}/{epochs}{stage_info} | LR: {current_lr:.2e}")
         
         # Train
         train_metrics = train_one_epoch(
@@ -600,16 +936,30 @@ def train(
             scheduler=scheduler if scheduler_type == "onecycle" else None,
             epoch=epoch + 1,
             use_amp=use_amp,
+            mixup=mixup,
+            cutmix=cutmix,
+            mixup_prob=mixup_prob,
+            model_ema=model_ema,
         )
         
-        # Validate
-        val_metrics = validate(
-            model=model,
-            val_loader=val_loader,
-            criterion=criterion,
-            device=device,
-            epoch=epoch + 1,
-        )
+        # Validate with EMA model if available and configured, otherwise use regular model
+        if model_ema is not None and use_ema_for_eval:
+            val_metrics = validate(
+                model=model_ema.module,
+                val_loader=val_loader,
+                criterion=criterion,
+                device=device,
+                epoch=epoch + 1,
+            )
+            logger.info("Validation performed with EMA model")
+        else:
+            val_metrics = validate(
+                model=model,
+                val_loader=val_loader,
+                criterion=criterion,
+                device=device,
+                epoch=epoch + 1,
+            )
         
         # Update scheduler (if not OneCycleLR)
         if scheduler_type != "onecycle":
@@ -653,6 +1003,7 @@ def train(
             config=config,
             output_dir=output_dir,
             is_best=is_best,
+            model_ema=model_ema,
         )
         
         # Early stopping check
