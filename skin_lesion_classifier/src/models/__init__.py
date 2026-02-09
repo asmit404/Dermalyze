@@ -3,7 +3,6 @@
 from .efficientnet import (
     SkinLesionClassifier,
     FocalLoss,
-    LabelSmoothingCrossEntropy,
     create_model,
     get_loss_function,
 )
@@ -11,7 +10,6 @@ from .efficientnet import (
 __all__ = [
     "SkinLesionClassifier",
     "FocalLoss",
-    "LabelSmoothingCrossEntropy",
     "create_model",
     "get_loss_function",
 ]

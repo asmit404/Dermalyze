@@ -36,7 +36,6 @@ class SkinLesionClassifier(nn.Module):
         dropout_rate: float = 0.3,
         freeze_backbone: bool = False,
         freeze_layers: Optional[int] = None,
-        head_type: Literal["simple", "acrnn"] = "simple",
     ):
         """
         Initialize the skin lesion classifier.
@@ -47,36 +46,23 @@ class SkinLesionClassifier(nn.Module):
             dropout_rate: Dropout rate for regularization
             freeze_backbone: Whether to freeze all backbone layers
             freeze_layers: Number of backbone layers to freeze (from the start)
-            head_type: Type of classification head ("simple" or "acrnn")
         """
         super().__init__()
         
         self.num_classes = num_classes
-        self.head_type = head_type
         
         # Load pretrained backbone (EfficientNet-V2 Small)
         self.backbone, self.feature_dim = self._create_backbone(pretrained)
         
-        if head_type == "acrnn":
-            from .acrnn import ACRNN
-            self.classifier = ACRNN(input_dim=self.feature_dim, num_classes=num_classes)
-        else:
-            # Custom classification head with dropout for regularization
-            # Using consistent dropout throughout for stronger regularization
-            self.classifier = nn.Sequential(
-                nn.Dropout(p=dropout_rate),
-                nn.Linear(self.feature_dim, 512),
-                nn.BatchNorm1d(512),
-                nn.ReLU(inplace=True),
-                nn.Dropout(p=dropout_rate),  # Increased from dropout_rate/2
-                nn.Linear(512, 256),
-                nn.BatchNorm1d(256),
-                nn.ReLU(inplace=True),
-                nn.Dropout(p=dropout_rate),  # Increased from dropout_rate/2
-                nn.Linear(256, num_classes),
-            )
-            # Initialize classifier weights for simple head
-            self._initialize_classifier()
+        # Lightweight classification head — the pretrained backbone already
+        # produces strong features; a single hidden layer is sufficient for
+        # 7-class classification and reduces overfitting risk.
+        self.classifier = nn.Sequential(
+            nn.Dropout(p=dropout_rate),
+            nn.Linear(self.feature_dim, num_classes),
+        )
+        # Initialize classifier weights
+        self._initialize_classifier()
         
         # Freeze backbone if specified
         if freeze_backbone:
@@ -238,79 +224,11 @@ class FocalLoss(nn.Module):
             return loss
 
 
-class LabelSmoothingCrossEntropy(nn.Module):
-    """
-    Cross entropy loss with label smoothing.
-    
-    Label smoothing prevents the model from becoming overconfident
-    and improves generalization.
-    """
-    
-    def __init__(
-        self,
-        smoothing: float = 0.1,
-        weight: Optional[torch.Tensor] = None,
-        reduction: Literal["mean", "sum", "none"] = "mean",
-    ):
-        """
-        Initialize label smoothing cross entropy.
-        
-        Args:
-            smoothing: Smoothing factor (0 = no smoothing, 1 = uniform)
-            weight: Class weights tensor
-            reduction: How to reduce the loss
-        """
-        super().__init__()
-        self.smoothing = smoothing
-        self.weight = weight
-        self.reduction = reduction
-    
-    def forward(self, inputs: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
-        """
-        Compute label smoothing cross entropy loss.
-        
-        Args:
-            inputs: Logits of shape (batch_size, num_classes)
-            targets: Ground truth labels of shape (batch_size,)
-            
-        Returns:
-            Loss value
-        """
-        num_classes = inputs.size(1)
-        log_probs = F.log_softmax(inputs, dim=1)
-        
-        # Create smoothed targets
-        with torch.no_grad():
-            smoothed_targets = torch.zeros_like(log_probs)
-            smoothed_targets.fill_(self.smoothing / (num_classes - 1))
-            smoothed_targets.scatter_(1, targets.unsqueeze(1), 1 - self.smoothing)
-        
-        # Compute loss
-        loss = -smoothed_targets * log_probs
-        
-        # Apply class weights if provided
-        if self.weight is not None:
-            weight = self.weight.to(inputs.device)
-            weight = weight.unsqueeze(0).expand_as(loss)
-            loss = loss * weight
-        
-        loss = loss.sum(dim=1)
-        
-        # Apply reduction
-        if self.reduction == "mean":
-            return loss.mean()
-        elif self.reduction == "sum":
-            return loss.sum()
-        else:
-            return loss
-
-
 def create_model(
     num_classes: int = 7,
     pretrained: bool = True,
     dropout_rate: float = 0.3,
     freeze_backbone: bool = False,
-    head_type: Literal["simple", "acrnn"] = "simple",
 ) -> SkinLesionClassifier:
     """
     Factory function to create a skin lesion classifier.
@@ -320,7 +238,6 @@ def create_model(
         pretrained: Whether to use pretrained weights
         dropout_rate: Dropout rate for regularization
         freeze_backbone: Whether to freeze backbone layers
-        head_type: Type of classification head ("simple" or "acrnn")
         
     Returns:
         Configured SkinLesionClassifier model (EfficientNet-V2 Small backbone)
@@ -330,14 +247,12 @@ def create_model(
         pretrained=pretrained,
         dropout_rate=dropout_rate,
         freeze_backbone=freeze_backbone,
-        head_type=head_type,
     )
 
 
 def get_loss_function(
-    loss_type: Literal["cross_entropy", "focal", "label_smoothing"] = "focal",
+    loss_type: Literal["cross_entropy", "focal"] = "focal",
     class_weights: Optional[torch.Tensor] = None,
-    label_smoothing: float = 0.1,
     focal_gamma: float = 2.0,
     focal_alpha: Optional[torch.Tensor] = None,
 ) -> nn.Module:
@@ -345,9 +260,8 @@ def get_loss_function(
     Get the loss function for training.
     
     Args:
-        loss_type: Type of loss function
-        class_weights: Optional class weights for imbalanced data (for cross_entropy and label_smoothing)
-        label_smoothing: Smoothing factor for label smoothing loss
+        loss_type: Type of loss function ("cross_entropy" or "focal")
+        class_weights: Optional class weights for imbalanced data (for cross_entropy)
         focal_gamma: Focusing parameter for focal loss
         focal_alpha: Alpha weights for focal loss (if None, uses class_weights)
         
@@ -359,9 +273,5 @@ def get_loss_function(
     elif loss_type == "focal":
         alpha = focal_alpha if focal_alpha is not None else class_weights
         return FocalLoss(alpha=alpha, gamma=focal_gamma)
-    elif loss_type == "label_smoothing":
-        return LabelSmoothingCrossEntropy(
-            smoothing=label_smoothing, weight=class_weights
-        )
     else:
-        raise ValueError(f"Unknown loss type: {loss_type}")
+        raise ValueError(f"Unknown loss type: {loss_type}. Choose 'cross_entropy' or 'focal'.")

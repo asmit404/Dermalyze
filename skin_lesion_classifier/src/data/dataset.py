@@ -219,6 +219,11 @@ def get_transforms(
                 transforms.RandomPerspective(distortion_scale=0.2, p=0.3),
                 transforms.GaussianBlur(kernel_size=3, sigma=(0.1, 2.0)),
             ]
+            post_transforms = [
+                transforms.RandomErasing(
+                    p=0.2, scale=(0.02, 0.15), ratio=(0.3, 3.3), value="random"
+                )
+            ]
         else:  # domain (stronger, domain-robust)
             aug_transforms = [
                 transforms.RandomHorizontalFlip(p=0.5),

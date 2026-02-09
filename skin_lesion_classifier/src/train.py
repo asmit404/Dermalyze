@@ -29,7 +29,7 @@ import torch
 import torch.nn as nn
 from torch.amp import GradScaler, autocast
 from torch.optim import AdamW
-from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts, OneCycleLR
+from torch.optim.lr_scheduler import OneCycleLR
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 import yaml
@@ -43,10 +43,6 @@ from src.data.dataset import (
     get_class_weights_for_loss,
     CLASS_LABELS,
     IDX_TO_LABEL,
-)
-from src.data.feature_cache import (
-    FeatureCacheManager,
-    create_cached_dataloaders,
 )
 from src.models.efficientnet import create_model, get_loss_function
 
@@ -367,11 +363,25 @@ class MetricTracker:
         self.all_targets.extend(targets.cpu().numpy())
     
     def compute(self) -> Dict[str, float]:
-        """Compute final metrics."""
-        return {
+        """Compute final metrics including balanced accuracy."""
+        metrics = {
             "loss": self.loss_sum / max(self.total, 1),
             "accuracy": self.correct / max(self.total, 1),
         }
+        # Balanced accuracy: mean of per-class recall
+        if self.all_preds and self.all_targets:
+            preds_arr = np.array(self.all_preds)
+            targets_arr = np.array(self.all_targets)
+            classes = np.unique(targets_arr)
+            per_class_recall = []
+            for c in classes:
+                mask = targets_arr == c
+                if mask.sum() > 0:
+                    per_class_recall.append((preds_arr[mask] == c).mean())
+            metrics["balanced_accuracy"] = float(np.mean(per_class_recall)) if per_class_recall else 0.0
+        else:
+            metrics["balanced_accuracy"] = 0.0
+        return metrics
 
 
 def train_one_epoch(
@@ -492,115 +502,6 @@ def train_one_epoch(
             "acc": f"{current_metrics['accuracy']:.4f}",
         })
     
-    return metrics.compute()
-
-
-def train_one_epoch_cached(
-    classifier: nn.Module,
-    train_loader: DataLoader,
-    criterion: nn.Module,
-    optimizer: torch.optim.Optimizer,
-    device: torch.device,
-    epoch: int = 0,
-    model_ema: Optional["ModelEMA"] = None,
-    parent_model: Optional[nn.Module] = None,
-) -> Dict[str, float]:
-    """
-    Train only the classification head using cached backbone features.
-
-    This is significantly faster than full forward passes since the
-    backbone computation is skipped entirely.
-
-    Args:
-        classifier: The classification head module
-        train_loader: DataLoader yielding (features, labels) from cache
-        criterion: Loss function
-        optimizer: Optimizer (should only contain classifier params)
-        device: Device to train on
-        epoch: Current epoch number
-        model_ema: Optional ModelEMA to update after each step
-        parent_model: The full model (needed for EMA update)
-
-    Returns:
-        Dictionary of training metrics
-    """
-    classifier.train()
-    metrics = MetricTracker()
-    non_blocking = device.type == "cuda"
-
-    pbar = tqdm(train_loader, desc=f"Epoch {epoch} [Train/Cached]", leave=False)
-
-    for features, targets in pbar:
-        features = features.to(device, non_blocking=non_blocking)
-        targets = targets.to(device, non_blocking=non_blocking)
-
-        optimizer.zero_grad(set_to_none=True)
-
-        outputs = classifier(features)
-        loss = criterion(outputs, targets)
-        loss.backward()
-        torch.nn.utils.clip_grad_norm_(classifier.parameters(), max_norm=1.0)
-        optimizer.step()
-
-        # Update ModelEMA so validation sees updated weights
-        if model_ema is not None and parent_model is not None:
-            model_ema.update(parent_model)
-
-        preds = torch.argmax(outputs, dim=1)
-        metrics.update(loss.item(), preds, targets)
-
-        current_metrics = metrics.compute()
-        pbar.set_postfix({
-            "loss": f"{current_metrics['loss']:.4f}",
-            "acc": f"{current_metrics['accuracy']:.4f}",
-        })
-
-    return metrics.compute()
-
-
-@torch.no_grad()
-def validate_cached(
-    classifier: nn.Module,
-    val_loader: DataLoader,
-    criterion: nn.Module,
-    device: torch.device,
-    epoch: int = 0,
-) -> Dict[str, float]:
-    """
-    Validate the classification head using cached backbone features.
-
-    Args:
-        classifier: The classification head module
-        val_loader: DataLoader yielding (features, labels) from cache
-        criterion: Loss function
-        device: Device to validate on
-        epoch: Current epoch number
-
-    Returns:
-        Dictionary of validation metrics
-    """
-    classifier.eval()
-    metrics = MetricTracker()
-    non_blocking = device.type == "cuda"
-
-    pbar = tqdm(val_loader, desc=f"Epoch {epoch} [Val/Cached]", leave=False)
-
-    for features, targets in pbar:
-        features = features.to(device, non_blocking=non_blocking)
-        targets = targets.to(device, non_blocking=non_blocking)
-
-        outputs = classifier(features)
-        loss = criterion(outputs, targets)
-
-        preds = torch.argmax(outputs, dim=1)
-        metrics.update(loss.item(), preds, targets)
-
-        current_metrics = metrics.compute()
-        pbar.set_postfix({
-            "loss": f"{current_metrics['loss']:.4f}",
-            "acc": f"{current_metrics['accuracy']:.4f}",
-        })
-
     return metrics.compute()
 
 
@@ -803,24 +704,6 @@ def train(
     persistent_workers = train_config.get("persistent_workers", True) and num_workers > 0
     # pin_memory only helps with CUDA, not MPS or CPU
     pin_memory = device.type == "cuda"
-    
-    # Feature cache configuration (stage-2 only)
-    cache_config = train_config.get("feature_cache", {})
-    use_feature_cache = cache_config.get("enabled", False)
-
-    if use_feature_cache and not use_two_stage:
-        logger.warning(
-            "Feature caching requires two-stage training (stage1_epochs + stage2_epochs). "
-            "Disabling feature caching."
-        )
-        use_feature_cache = False
-
-    if use_feature_cache:
-        logger.info(
-            "Stage-aware feature caching enabled: "
-            "Stage 1 trains full model → Stage 2 caches backbone features "
-            "and trains classifier head only."
-        )
 
     train_loader, val_loader, _ = create_dataloaders(
         train_df=train_df,
@@ -844,15 +727,13 @@ def train(
     
     # Create model
     model_config = config.get("model", {})
-    head_type = model_config.get("head_type", "simple")
     logger.info("Creating model...")
-    logger.info(f"Using EfficientNet-V2 Small with {head_type.upper()} classification head")
+    logger.info("Using EfficientNet-V2 Small with simple classification head")
     model = create_model(
         num_classes=model_config.get("num_classes", 7),
         pretrained=model_config.get("pretrained", True),
         dropout_rate=model_config.get("dropout_rate", 0.3),
         freeze_backbone=model_config.get("freeze_backbone", False),
-        head_type=head_type,
     )
     model = model.to(device)
     base_model = model
@@ -892,7 +773,6 @@ def train(
     criterion = get_loss_function(
         loss_type=loss_config.get("type", "focal"),
         class_weights=focal_alpha if loss_config.get("type") != "focal" else None,
-        label_smoothing=loss_config.get("label_smoothing", 0.1),
         focal_gamma=loss_config.get("gamma", loss_config.get("focal_gamma", 2.0)),
         focal_alpha=focal_alpha if loss_config.get("type") == "focal" else None,
     )
@@ -905,36 +785,23 @@ def train(
         betas=(0.9, 0.999),
     )
     
-    # Create learning rate scheduler
+    # Create learning rate scheduler (OneCycleLR per-stage)
     scheduler_config = train_config.get("scheduler", {})
-    scheduler_type = scheduler_config.get("type", "cosine")
+    warmup_pct = scheduler_config.get("warmup_pct", 0.1)
     
-    if scheduler_type == "onecycle":
-        scheduler = OneCycleLR(
-            optimizer,
-            max_lr=lr,
-            epochs=epochs,
-            steps_per_epoch=len(train_loader),
-            pct_start=scheduler_config.get("warmup_pct", 0.1),
-            anneal_strategy="cos",
-        )
-    else:  # cosine
-        scheduler = CosineAnnealingWarmRestarts(
-            optimizer,
-            T_0=scheduler_config.get("T_0", 10),
-            T_mult=scheduler_config.get("T_mult", 2),
-            eta_min=scheduler_config.get("eta_min", 1e-6),
-        )
+    # Scope Stage 1 scheduler to stage1_epochs (or full epochs if no two-stage)
+    sched_epochs = stage1_epochs if use_two_stage else epochs
+    scheduler = OneCycleLR(
+        optimizer,
+        max_lr=lr,
+        epochs=sched_epochs,
+        steps_per_epoch=len(train_loader),
+        pct_start=warmup_pct,
+        anneal_strategy="cos",
+    )
     
     # Initialize gradient scaler for mixed precision
     scaler = GradScaler() if use_amp else None
-
-    # -------------------------------------------------------------------------
-    # Feature Caching: set up but defer extraction to stage 2 transition
-    # -------------------------------------------------------------------------
-    cached_train_loader = None
-    cached_val_loader = None
-    cache_active = False  # Becomes True once stage 2 cache is built
     
     # Initialize Mixup and CutMix
     mixup_config = train_config.get("mixup", {})
@@ -971,16 +838,16 @@ def train(
         model_ema.set(model)
         logger.info(f"ModelEMA enabled with decay={ema_decay}, use_for_eval={use_ema_for_eval}, save_best={save_ema_best}")
     
-    # Early stopping
+    # Early stopping (on balanced accuracy — higher is better)
     early_stopping = EarlyStopping(
         patience=train_config.get("early_stopping_patience", 15),
         min_delta=0.001,
-        mode="min",
-    )
+        mode="max",
+)
     
     # Resume from checkpoint if specified
     start_epoch = 0
-    best_val_loss = float("inf")
+    best_bal_acc = 0.0
     has_saved_best = False
     
     if resume_from is not None and resume_from.exists():
@@ -996,12 +863,12 @@ def train(
             logger.info("Found existing best checkpoint - loading its metrics")
             best_checkpoint = torch.load(best_checkpoint_path, map_location="cpu")
             best_metrics = best_checkpoint.get("metrics", {})
-            best_val_loss = best_metrics.get("val_loss", float("inf"))
+            best_bal_acc = best_metrics.get("val_balanced_acc", 0.0)
             has_saved_best = True
-            logger.info(f"Best validation loss from existing checkpoint: {best_val_loss:.4f}")
+            logger.info(f"Best balanced accuracy from existing checkpoint: {best_bal_acc:.4f}")
         else:
             # Use metrics from resumed checkpoint as baseline
-            best_val_loss = prev_metrics.get("val_loss", float("inf"))
+            best_bal_acc = prev_metrics.get("val_balanced_acc", 0.0)
             has_saved_best = False
             logger.warning("No existing best checkpoint found - will create new one")
     
@@ -1011,6 +878,7 @@ def train(
         "train_acc": [],
         "val_loss": [],
         "val_acc": [],
+        "val_balanced_acc": [],
         "lr": [],
     }
     
@@ -1029,111 +897,24 @@ def train(
             logger.info(f"Updating LR: {stage1_lr} -> {stage2_lr}")
             logger.info(f"Updating Weight Decay: {stage1_weight_decay} -> {stage2_weight_decay}")
             logger.info("="*70 + "\n")
-
-            # -----------------------------------------------------------------
-            # Feature Cache: freeze backbone and extract features at stage 2
-            # -----------------------------------------------------------------
-            if use_feature_cache:
-                logger.info("Freezing backbone and extracting features for stage 2 caching...")
-                base_model._freeze_backbone()
-
-                image_size = model_config.get("image_size", 224)
-                cache_dir = Path(cache_config.get("cache_dir", "data/feature_cache"))
-                force_rebuild = cache_config.get("rebuild", False)
-
-                # Always rebuild on first run since backbone weights changed during stage 1
-                force_rebuild = True
-
-                cache_manager = FeatureCacheManager(
-                    cache_dir=cache_dir,
-                    model_config=model_config,
-                    image_size=image_size,
-                )
-
-                logger.info(f"Cache directory: {cache_dir}")
-
-                backbone = base_model.backbone
-
-                from src.data.dataset import HAM10000Dataset, get_transforms
-                val_transform = get_transforms("val", image_size)
-
-                extract_train_dataset = HAM10000Dataset(
-                    df=train_df, images_dir=images_dir, transform=val_transform
-                )
-                extract_val_dataset = HAM10000Dataset(
-                    df=val_df, images_dir=images_dir, transform=val_transform
-                )
-
-                extract_loader_kwargs = {
-                    "batch_size": batch_size,
-                    "shuffle": False,
-                    "num_workers": num_workers,
-                    "pin_memory": pin_memory,
-                }
-                extract_train_loader = DataLoader(extract_train_dataset, **extract_loader_kwargs)
-                extract_val_loader = DataLoader(extract_val_dataset, **extract_loader_kwargs)
-
-                cached_train_ds = cache_manager.get_or_extract(
-                    "train", train_df, backbone, extract_train_loader, device, force_rebuild
-                )
-                cached_val_ds = cache_manager.get_or_extract(
-                    "val", val_df, backbone, extract_val_loader, device, force_rebuild
-                )
-
-                del extract_train_loader, extract_val_loader
-                del extract_train_dataset, extract_val_dataset
-
-                cached_batch_size = cache_config.get("batch_size", batch_size * 2)
-                cached_train_loader, cached_val_loader = create_cached_dataloaders(
-                    train_dataset=cached_train_ds,
-                    val_dataset=cached_val_ds,
-                    batch_size=cached_batch_size,
-                    num_workers=0,
-                    use_weighted_sampling=train_config.get("use_weighted_sampling", True),
-                    pin_memory=pin_memory,
-                )
-
-                cache_active = True
-                logger.info(
-                    f"Feature cache ready — train: {len(cached_train_ds)} samples, "
-                    f"val: {len(cached_val_ds)} samples, batch_size: {cached_batch_size}"
-                )
-                logger.info(
-                    "Stage 2 will train only the classifier head from cached features."
-                )
             
             # Recreate optimizer with stage 2 parameters
-            # When caching, only optimize classifier parameters
-            if cache_active:
-                opt_params = base_model.classifier.parameters()
-            else:
-                opt_params = model.parameters()
-
             optimizer = AdamW(
-                opt_params,
+                model.parameters(),
                 lr=stage2_lr,
                 weight_decay=stage2_weight_decay,
                 betas=(0.9, 0.999),
             )
             
-            # Recreate scheduler for stage 2
-            stage2_loader = cached_train_loader if cache_active else train_loader
-            if scheduler_type == "onecycle":
-                scheduler = OneCycleLR(
-                    optimizer,
-                    max_lr=stage2_lr,
-                    epochs=stage2_epochs,
-                    steps_per_epoch=len(stage2_loader),
-                    pct_start=scheduler_config.get("warmup_pct", 0.1),
-                    anneal_strategy="cos",
-                )
-            else:  # cosine
-                scheduler = CosineAnnealingWarmRestarts(
-                    optimizer,
-                    T_0=scheduler_config.get("T_0", 10),
-                    T_mult=scheduler_config.get("T_mult", 2),
-                    eta_min=scheduler_config.get("eta_min", 1e-6),
-                )
+            # Recreate scheduler for stage 2 (fresh OneCycleLR)
+            scheduler = OneCycleLR(
+                optimizer,
+                max_lr=stage2_lr,
+                epochs=stage2_epochs,
+                steps_per_epoch=len(train_loader),
+                pct_start=warmup_pct,
+                anneal_strategy="cos",
+            )
         
         # Get current learning rate
         current_lr = optimizer.param_groups[0]["lr"]
@@ -1146,60 +927,25 @@ def train(
             stage_info = f" | {stage_name} Stage {current_stage} [{stage_epoch}/{stage_total}]"
         logger.info(f"\nEpoch {epoch + 1}/{epochs}{stage_info} | LR: {current_lr:.2e}")
         
-        # Determine if we're in cached mode for this epoch
-        use_cache_this_epoch = cache_active and cached_train_loader is not None
-
         # Train
-        if use_cache_this_epoch:
-            # Cached feature training — classifier head only (stage 2)
-            train_metrics = train_one_epoch_cached(
-                classifier=base_model.classifier,
-                train_loader=cached_train_loader,
-                criterion=criterion,
-                optimizer=optimizer,
-                device=device,
-                epoch=epoch + 1,
-                model_ema=model_ema,
-                parent_model=base_model,
-            )
-        else:
-            train_metrics = train_one_epoch(
-                model=model,
-                train_loader=train_loader,
-                criterion=criterion,
-                optimizer=optimizer,
-                device=device,
-                scaler=scaler,
-                scheduler=scheduler if scheduler_type == "onecycle" else None,
-                epoch=epoch + 1,
-                use_amp=use_amp,
-                mixup=mixup,
-                cutmix=cutmix,
-                mixup_prob=mixup_prob,
-                model_ema=model_ema,
-            )
+        train_metrics = train_one_epoch(
+            model=model,
+            train_loader=train_loader,
+            criterion=criterion,
+            optimizer=optimizer,
+            device=device,
+            scaler=scaler,
+            scheduler=scheduler,
+            epoch=epoch + 1,
+            use_amp=use_amp,
+            mixup=mixup,
+            cutmix=cutmix,
+            mixup_prob=mixup_prob,
+            model_ema=model_ema,
+        )
         
         # Validate
-        if use_cache_this_epoch and cached_val_loader is not None:
-            # Cached feature validation — classifier head only (stage 2)
-            if model_ema is not None and use_ema_for_eval:
-                val_metrics = validate_cached(
-                    classifier=model_ema.module.classifier,
-                    val_loader=cached_val_loader,
-                    criterion=criterion,
-                    device=device,
-                    epoch=epoch + 1,
-                )
-                logger.info("Validation performed with EMA model (cached)")
-            else:
-                val_metrics = validate_cached(
-                    classifier=base_model.classifier,
-                    val_loader=cached_val_loader,
-                    criterion=criterion,
-                    device=device,
-                    epoch=epoch + 1,
-                )
-        elif model_ema is not None and use_ema_for_eval:
+        if model_ema is not None and use_ema_for_eval:
             val_metrics = validate(
                 model=model_ema.module,
                 val_loader=val_loader,
@@ -1217,17 +963,17 @@ def train(
                 epoch=epoch + 1,
             )
         
-        # Update scheduler (if not OneCycleLR)
-        if scheduler_type != "onecycle":
-            scheduler.step()
+        # OneCycleLR steps per-batch inside train_one_epoch, no per-epoch step needed
         
         # Log metrics
         epoch_time = time.time() - epoch_start
+        val_bal_acc = val_metrics.get("balanced_accuracy", 0.0)
         logger.info(
             f"Train Loss: {train_metrics['loss']:.4f} | "
             f"Train Acc: {train_metrics['accuracy']:.4f} | "
             f"Val Loss: {val_metrics['loss']:.4f} | "
             f"Val Acc: {val_metrics['accuracy']:.4f} | "
+            f"Val BalAcc: {val_bal_acc:.4f} | "
             f"Time: {epoch_time:.1f}s"
         )
         
@@ -1236,12 +982,13 @@ def train(
         history["train_acc"].append(train_metrics["accuracy"])
         history["val_loss"].append(val_metrics["loss"])
         history["val_acc"].append(val_metrics["accuracy"])
+        history["val_balanced_acc"].append(val_bal_acc)
         history["lr"].append(current_lr)
         
-        # Check for best model and save checkpoint
-        is_best = val_metrics["loss"] < best_val_loss
+        # Check for best model (using balanced accuracy — higher is better)
+        is_best = val_bal_acc > best_bal_acc
         if is_best:
-            best_val_loss = val_metrics["loss"]
+            best_bal_acc = val_bal_acc
             has_saved_best = True
         
         # Save checkpoint
@@ -1255,6 +1002,7 @@ def train(
                 "train_acc": train_metrics["accuracy"],
                 "val_loss": val_metrics["loss"],
                 "val_acc": val_metrics["accuracy"],
+                "val_balanced_acc": val_bal_acc,
             },
             config=config,
             output_dir=output_dir,
@@ -1262,8 +1010,8 @@ def train(
             model_ema=model_ema,
         )
         
-        # Early stopping check
-        if early_stopping(val_metrics["loss"]):
+        # Early stopping check (on balanced accuracy)
+        if early_stopping(val_bal_acc):
             logger.info(f"Early stopping triggered at epoch {epoch + 1}")
             break
     
@@ -1283,7 +1031,7 @@ def train(
     
     total_time = time.time() - start_time
     logger.info(f"\nTraining completed in {total_time / 60:.1f} minutes")
-    logger.info(f"Best validation loss: {best_val_loss:.4f}")
+    logger.info(f"Best balanced accuracy: {best_bal_acc:.4f}")
     logger.info(f"Model saved to: {output_dir}")
 
 
@@ -1310,28 +1058,10 @@ def main() -> None:
         default=None,
         help="Path to checkpoint to resume from",
     )
-    parser.add_argument(
-        "--cache-features",
-        action="store_true",
-        default=None,
-        help="Enable feature caching (overrides config)",
-    )
-    parser.add_argument(
-        "--rebuild-cache",
-        action="store_true",
-        default=False,
-        help="Force rebuild the feature cache",
-    )
     args = parser.parse_args()
     
     # Load configuration
     config = load_config(args.config)
-
-    # Apply CLI overrides for feature caching
-    if args.cache_features is not None:
-        config.setdefault("training", {}).setdefault("feature_cache", {})["enabled"] = True
-    if args.rebuild_cache:
-        config.setdefault("training", {}).setdefault("feature_cache", {})["rebuild"] = True
     
     # Set up output directory
     if args.output is None:

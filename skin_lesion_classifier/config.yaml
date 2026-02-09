@@ -21,10 +21,9 @@ data:
 model:
   name: efficientnet_v2      # EfficientNet-V2 Small (hardcoded)
   num_classes: 7
-  image_size: 224
+  image_size: 224            # Higher res captures fine dermoscopic detail
   pretrained: true
-  head_type: acrnn          # Attention-based Conv Recurrent NN classification head
-  dropout_rate: 0.35        # ↓ Reduced (was choking learning at 0.65)
+  dropout_rate: 0.3          # Dropout for regularization
   freeze_backbone: false
 
 # -----------------------------------------------------------------------------
@@ -32,102 +31,87 @@ model:
 # -----------------------------------------------------------------------------
 training:
   seed: 42
-  batch_size: 48    
-  epochs: 40                # Maximum epochs (or use two-stage training below)
-  lr: 0.0003                # ↑ Better for EfficientNet fine-tuning
-  weight_decay: 0.02        # ↓ Balanced L2 regularization
+  batch_size: 32              # ↓ Smaller batch = better generalization + fits 300px images
+  epochs: 30                  # ↑ More epochs to converge properly
+  lr: 0.0003
+  weight_decay: 0.02
   
   # Two-Stage Training
-  stage1_epochs: 5          # Warm-up stage with higher LR
-  stage1_lr: 0.001
+  stage1_epochs: 8            # ↑ More warm-up epochs for backbone adaptation
+  stage1_lr: 0.0001           # ↓ CRITICAL FIX: 0.001 was destroying pretrained features
   stage1_weight_decay: 0.01
-  stage2_epochs: 35         # Fine-tuning stage with lower LR
-  stage2_lr: 0.00025
-  stage2_weight_decay: 0.02
+  stage2_epochs: 52           # ↑ More fine-tuning time
+  stage2_lr: 0.0003           # ↑ Higher LR is fine when only training the head
+  stage2_weight_decay: 0.03   # ↑ Stronger regularization for head-only training
   
   num_workers: 4
-  use_amp: false            # MPS doesn't support AMP efficiently
-  use_torch_compile: false  # Disabled for MPS (backward pass issues)
+  use_amp: false              # MPS doesn't support AMP efficiently
+  use_torch_compile: false    # Disabled for MPS (backward pass issues)
   use_weighted_sampling: true
-  fast_mode: true           # Disable deterministic operations for speed
-  augmentation: medium      # Options: light, medium, heavy, domain
-  early_stopping_patience: 6
-  prefetch_factor: 2        # Prefetch batches for better pipeline
-  persistent_workers: true  # Keep workers alive between epochs
+  fast_mode: true             # Disable deterministic operations for speed
+  augmentation: heavy         # ↑ Stronger augmentation for medical imaging (was medium)
+  early_stopping_patience: 12 # ↑ More patience to avoid premature stopping (was 6)
+  prefetch_factor: 2          # Prefetch batches for better pipeline
+  persistent_workers: true    # Keep workers alive between epochs
 
-  # Feature Caching (Stage-2 Only)
-  # Stage 1 trains the full model normally (backbone unfrozen).
-  # At the stage 1→2 transition, the backbone is frozen and its features
-  # are extracted/cached to disk. Stage 2 then trains only the classifier
-  # head from cached features (~5-10x faster per epoch).
-  # Requires two-stage training (stage1_epochs + stage2_epochs).
-  feature_cache:
-    enabled: true           # Enable stage-2 feature caching
-    cache_dir: data/feature_cache  # Directory to store cached features
-    rebuild: false           # Force rebuild cache even if valid cache exists
-    batch_size: 128          # Batch size for cached feature training (can be larger)
-
-  # Learning Rate Scheduler
+  # Learning Rate Scheduler (OneCycleLR per-stage)
   scheduler:
-    type: cosine
-    T_0: 20
-    T_mult: 1
-    eta_min: 0.00001
-    warmup_pct: 0.05
+    type: onecycle           # OneCycleLR — smooth ramp-up then cosine decay per stage
+    warmup_pct: 0.1          # Fraction of steps for LR warm-up
 
   # Mixup Data Augmentation
   mixup:
-    enabled: true           # Enable mixup augmentation
-    alpha: 1.0               # Beta distribution parameter (0.2-1.0 recommended)
+    enabled: true
+    alpha: 0.2               # ↓ CRITICAL FIX: 1.0 was way too aggressive (uniform mixing)
 
   # CutMix Data Augmentation
   cutmix:
-    enabled: true           # Enable cutmix augmentation
-    alpha: 1.0               # Beta distribution parameter (0.2-1.0 recommended)
+    enabled: true
+    alpha: 0.2               # ↓ CRITICAL FIX: 1.0 was way too aggressive
 
   mixup_prob: 0.5            # Probability of mixup vs cutmix (when both enabled)
 
   # Exponential Moving Average (EMA)
   ema:
-    enabled: true           # Enable model EMA for better generalization
-    decay: 0.9999            # EMA decay rate (0.999-0.9999 recommended)
-    use_for_eval: true       # Use EMA model for validation (recommended)
-    save_best: true          # Save EMA weights in best checkpoint
+    enabled: true
+    decay: 0.99              # ↓ CRITICAL FIX: 0.9999 barely updates for short training
+    use_for_eval: true
+    save_best: true
 
 # -----------------------------------------------------------------------------
 # Loss Function
 # -----------------------------------------------------------------------------
 loss:
-  type: cross_entropy
-  label_smoothing: 0.05     # ↓ Prevents overconfidence without suppressing signal
+  type: focal                # Focal loss handles HAM10000 class imbalance
+  gamma: 2.0                 # Focusing parameter (down-weight easy examples)
 
 # -----------------------------------------------------------------------------
 # Data Augmentation (Dermatoscopy-Safe)
 # -----------------------------------------------------------------------------
 augmentation:
   enabled: true
-  intensity: medium
+  intensity: heavy               # ↑ Stronger for medical imaging (was medium)
   techniques:
     - random_horizontal_flip: 0.5
-    - random_vertical_flip: 0.3
-    - random_rotation: 25
+    - random_vertical_flip: 0.5  # ↑ Dermoscopic images have no canonical orientation
+    - random_rotation: 45        # ↑ Full rotation range (was 25)
     - color_jitter:
-        brightness: 0.2
-        contrast: 0.2
-        saturation: 0.2
+        brightness: 0.3          # ↑ More color variation (was 0.2)
+        contrast: 0.3
+        saturation: 0.3
         hue: 0.1
-    - gaussian_blur: 0.1
+    - gaussian_blur: 0.15        # ↑ Slightly more blur (was 0.1)
     - random_affine:
         degrees: 15
-        translate: 0.1
-        scale: [0.9, 1.1]
-    - cutout: 0.1
+        translate: 0.15          # ↑ More translation (was 0.1)
+        scale: [0.85, 1.15]      # ↑ Wider scale range
+    - cutout: 0.15               # ↑ More erasing (was 0.1)
 
 # -----------------------------------------------------------------------------
 # Evaluation Configuration
 # -----------------------------------------------------------------------------
 evaluation:
-  batch_size: 96
+  batch_size: 64                  # ↓ Fits 300px images in memory (was 96)
   metrics:
     - accuracy
     - precision
@@ -138,16 +122,16 @@ evaluation:
   
   # Test-Time Augmentation (TTA)
   tta:
-    enabled: true                     # Enable TTA for more robust predictions
-    mode: medium                      # Options: light (4 augs), medium (8 augs), full (all)
-    aggregation: mean                 # Options: mean, geometric_mean, max
+    enabled: true
+    mode: medium
+    aggregation: mean
   
   # Ensemble Prediction
   ensemble:
-    enabled: true                     # Enable ensemble from multiple checkpoints
-    checkpoints: []                   # List of checkpoint paths
-    weights: null                     # Optional weights (null = uniform)
-    aggregation: weighted_mean        # Options: mean, weighted_mean, geometric_mean
+    enabled: true
+    checkpoints: []
+    weights: null
+    aggregation: weighted_mean
 
 # -----------------------------------------------------------------------------
 # Output Configuration
