@@ -15,7 +15,7 @@ import json
 import logging
 import sys
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Literal, Optional, Tuple, Union
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -34,6 +34,7 @@ from sklearn.metrics import (
     roc_curve,
 )
 from torch.utils.data import DataLoader
+from torchvision import transforms
 from tqdm import tqdm
 
 # Add parent directory to path for imports
@@ -45,8 +46,11 @@ from src.data.dataset import (
     CLASS_LABELS,
     LABEL_TO_IDX,
     IDX_TO_LABEL,
+    IMAGENET_MEAN,
+    IMAGENET_STD,
 )
 from src.models.efficientnet import SkinLesionClassifier
+from src.inference import get_tta_transforms
 
 
 # Configure logging
@@ -123,6 +127,217 @@ def get_predictions(
         all_targets.extend(targets.numpy())
         all_preds.extend(preds.cpu().numpy())
         all_probs.extend(probs.cpu().numpy())
+    
+    return (
+        np.array(all_targets),
+        np.array(all_preds),
+        np.array(all_probs),
+    )
+
+
+@torch.no_grad()
+def get_predictions_with_tta(
+    model: SkinLesionClassifier,
+    dataloader: DataLoader,
+    device: torch.device,
+    tta_mode: Literal["light", "medium", "full"] = "medium",
+    aggregation: Literal["mean", "geometric_mean", "max"] = "mean",
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """
+    Get model predictions with Test-Time Augmentation.
+    
+    Args:
+        model: Trained model
+        dataloader: DataLoader for evaluation
+        device: Device to run inference on
+        tta_mode: TTA complexity (light, medium, full)
+        aggregation: How to aggregate TTA predictions
+        
+    Returns:
+        Tuple of (true_labels, predicted_labels, predicted_probabilities)
+    """
+    all_targets = []
+    all_preds = []
+    all_probs = []
+    
+    # Get TTA transforms
+    tta_transforms = get_tta_transforms(dataloader.dataset.transform.transforms[0].size[0])
+    
+    if tta_mode == "light":
+        tta_transforms = tta_transforms[:4]  # Original + flips
+    elif tta_mode == "medium":
+        tta_transforms = tta_transforms  # All transforms
+    else:  # full
+        tta_transforms = tta_transforms
+    
+    for images, targets in tqdm(dataloader, desc=f"Evaluating with TTA ({tta_mode})"):
+        batch_size = images.size(0)
+        
+        # Collect TTA predictions for each image in batch
+        batch_tta_probs = []
+        
+        for aug_idx, tta_transform in enumerate(tta_transforms):
+            # Apply TTA transform to each image
+            # Note: We need to denormalize, apply transform, and renormalize
+            # For simplicity, we'll use the original images and standard augmentations
+            
+            aug_images = images.to(device)
+            
+            # Simple augmentations that can be done in tensor space
+            if aug_idx == 1:  # Horizontal flip
+                aug_images = torch.flip(aug_images, dims=[3])
+            elif aug_idx == 2:  # Vertical flip
+                aug_images = torch.flip(aug_images, dims=[2])
+            elif aug_idx == 3:  # Both flips
+                aug_images = torch.flip(aug_images, dims=[2, 3])
+            elif aug_idx == 4:  # 90° rotation
+                aug_images = torch.rot90(aug_images, k=1, dims=[2, 3])
+            elif aug_idx == 5:  # 180° rotation
+                aug_images = torch.rot90(aug_images, k=2, dims=[2, 3])
+            elif aug_idx == 6:  # 270° rotation
+                aug_images = torch.rot90(aug_images, k=3, dims=[2, 3])
+            # aug_idx == 0 or 7: use original
+            
+            logits = model(aug_images)
+            probs = F.softmax(logits, dim=1)
+            batch_tta_probs.append(probs.cpu().numpy())
+        
+        # Aggregate TTA predictions
+        batch_tta_probs = np.array(batch_tta_probs)  # Shape: (n_augs, batch_size, n_classes)
+        batch_tta_probs = np.transpose(batch_tta_probs, (1, 0, 2))  # Shape: (batch_size, n_augs, n_classes)
+        
+        if aggregation == "mean":
+            final_probs = np.mean(batch_tta_probs, axis=1)
+        elif aggregation == "geometric_mean":
+            final_probs = np.exp(np.mean(np.log(batch_tta_probs + 1e-10), axis=1))
+            final_probs = final_probs / final_probs.sum(axis=1, keepdims=True)
+        else:  # max
+            final_probs = np.max(batch_tta_probs, axis=1)
+        
+        preds = np.argmax(final_probs, axis=1)
+        
+        all_targets.extend(targets.numpy())
+        all_preds.extend(preds)
+        all_probs.extend(final_probs)
+    
+    return (
+        np.array(all_targets),
+        np.array(all_preds),
+        np.array(all_probs),
+    )
+
+
+@torch.no_grad()
+def get_ensemble_predictions(
+    models: List[SkinLesionClassifier],
+    dataloader: DataLoader,
+    device: torch.device,
+    weights: Optional[List[float]] = None,
+    aggregation: Literal["mean", "weighted_mean", "geometric_mean"] = "weighted_mean",
+    use_tta: bool = False,
+    tta_mode: Literal["light", "medium", "full"] = "medium",
+    tta_aggregation: Literal["mean", "geometric_mean", "max"] = "mean",
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """
+    Get ensemble predictions from multiple models.
+    
+    Args:
+        models: List of trained models
+        dataloader: DataLoader for evaluation
+        device: Device to run inference on
+        weights: Optional weights for each model
+        aggregation: How to combine model predictions
+        use_tta: Whether to use TTA for each model
+        tta_mode: TTA complexity if use_tta=True
+        tta_aggregation: How to aggregate TTA predictions
+        
+    Returns:
+        Tuple of (true_labels, predicted_labels, predicted_probabilities)
+    """
+    if weights is None:
+        weights = np.ones(len(models)) / len(models)
+    else:
+        weights = np.array(weights)
+        weights = weights / weights.sum()
+    
+    all_targets = []
+    all_preds = []
+    all_probs = []
+    
+    desc = f"Ensemble evaluation ({len(models)} models"
+    if use_tta:
+        desc += f", TTA-{tta_mode}"
+    desc += ")"
+    
+    for images, targets in tqdm(dataloader, desc=desc):
+        # Collect predictions from all models
+        model_probs_list = []
+        
+        for model in models:
+            if use_tta:
+                # Use TTA for this model
+                # For batch processing, we'll use a simpler approach
+                images_device = images.to(device)
+                
+                # Collect TTA predictions
+                tta_probs = []
+                for aug_idx in range(8 if tta_mode in ["medium", "full"] else 4):
+                    aug_images = images_device
+                    
+                    if aug_idx == 1:  # H flip
+                        aug_images = torch.flip(aug_images, dims=[3])
+                    elif aug_idx == 2:  # V flip
+                        aug_images = torch.flip(aug_images, dims=[2])
+                    elif aug_idx == 3:  # Both flips
+                        aug_images = torch.flip(aug_images, dims=[2, 3])
+                    elif aug_idx == 4 and tta_mode in ["medium", "full"]:  # 90°
+                        aug_images = torch.rot90(aug_images, k=1, dims=[2, 3])
+                    elif aug_idx == 5 and tta_mode in ["medium", "full"]:  # 180°
+                        aug_images = torch.rot90(aug_images, k=2, dims=[2, 3])
+                    elif aug_idx == 6 and tta_mode in ["medium", "full"]:  # 270°
+                        aug_images = torch.rot90(aug_images, k=3, dims=[2, 3])
+                    
+                    logits = model(aug_images)
+                    probs = F.softmax(logits, dim=1)
+                    tta_probs.append(probs.cpu().numpy())
+                
+                # Aggregate TTA
+                tta_probs = np.array(tta_probs)  # (n_augs, batch_size, n_classes)
+                tta_probs = np.transpose(tta_probs, (1, 0, 2))  # (batch_size, n_augs, n_classes)
+                
+                if tta_aggregation == "mean":
+                    final_probs = np.mean(tta_probs, axis=1)
+                elif tta_aggregation == "geometric_mean":
+                    final_probs = np.exp(np.mean(np.log(tta_probs + 1e-10), axis=1))
+                    final_probs = final_probs / final_probs.sum(axis=1, keepdims=True)
+                else:  # max
+                    final_probs = np.max(tta_probs, axis=1)
+                
+                model_probs_list.append(final_probs)
+            else:
+                # Standard prediction
+                images_device = images.to(device)
+                logits = model(images_device)
+                probs = F.softmax(logits, dim=1).cpu().numpy()
+                model_probs_list.append(probs)
+        
+        # Aggregate model predictions
+        model_probs_list = np.array(model_probs_list)  # (n_models, batch_size, n_classes)
+        model_probs_list = np.transpose(model_probs_list, (1, 0, 2))  # (batch_size, n_models, n_classes)
+        
+        if aggregation == "mean":
+            final_probs = np.mean(model_probs_list, axis=1)
+        elif aggregation == "weighted_mean":
+            final_probs = np.average(model_probs_list, axis=1, weights=weights)
+        else:  # geometric_mean
+            final_probs = np.exp(np.mean(np.log(model_probs_list + 1e-10), axis=1))
+            final_probs = final_probs / final_probs.sum(axis=1, keepdims=True)
+        
+        preds = np.argmax(final_probs, axis=1)
+        
+        all_targets.extend(targets.numpy())
+        all_preds.extend(preds)
+        all_probs.extend(final_probs)
     
     return (
         np.array(all_targets),
@@ -452,12 +667,18 @@ def plot_per_class_metrics(
 
 
 def evaluate(
-    checkpoint_path: Path,
+    checkpoint_path: Union[Path, List[Path]],
     test_csv: Path,
     images_dir: Path,
     output_dir: Path,
     batch_size: int = 32,
     num_workers: int = 4,
+    use_tta: bool = False,
+    tta_mode: Literal["light", "medium", "full"] = "medium",
+    tta_aggregation: Literal["mean", "geometric_mean", "max"] = "mean",
+    use_ensemble: bool = False,
+    ensemble_weights: Optional[List[float]] = None,
+    ensemble_aggregation: Literal["mean", "weighted_mean", "geometric_mean"] = "weighted_mean",
 ) -> Dict[str, Any]:
     """
     Evaluate a trained model on test data.
@@ -479,9 +700,32 @@ def evaluate(
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     logger.info(f"Using device: {device}")
     
-    # Load model
-    logger.info(f"Loading model from: {checkpoint_path}")
-    model, config = load_model(checkpoint_path, device)
+    # Load model(s)
+    if use_ensemble or isinstance(checkpoint_path, list):
+        if not isinstance(checkpoint_path, list):
+            raise ValueError("Ensemble mode requires list of checkpoint paths")
+        
+        logger.info(f"Loading ensemble of {len(checkpoint_path)} models...")
+        models = []
+        for i, cp in enumerate(checkpoint_path):
+            model, config = load_model(Path(cp), device)
+            models.append(model)
+            logger.info(f"  Model {i+1}: {cp}")
+        
+        if ensemble_weights:
+            logger.info(f"Using custom ensemble weights: {ensemble_weights}")
+        
+        eval_mode = "ensemble"
+        if use_tta:
+            eval_mode += f" + TTA-{tta_mode}"
+    else:
+        logger.info(f"Loading model from: {checkpoint_path}")
+        model, config = load_model(checkpoint_path, device)
+        eval_mode = "standard"
+        if use_tta:
+            eval_mode = f"TTA-{tta_mode}"
+    
+    logger.info(f"Evaluation mode: {eval_mode}")
     
     # Load test data
     logger.info(f"Loading test data from: {test_csv}")
@@ -505,9 +749,30 @@ def evaluate(
     
     logger.info(f"Test samples: {len(test_dataset)}")
     
-    # Get predictions
-    logger.info("Running inference...")
-    y_true, y_pred, y_prob = get_predictions(model, test_loader, device)
+    # Get predictions based on mode
+    logger.info(f"Running inference ({eval_mode})...")
+    
+    if use_ensemble or isinstance(checkpoint_path, list):
+        y_true, y_pred, y_prob = get_ensemble_predictions(
+            models=models,
+            dataloader=test_loader,
+            device=device,
+            weights=ensemble_weights,
+            aggregation=ensemble_aggregation,
+            use_tta=use_tta,
+            tta_mode=tta_mode,
+            tta_aggregation=tta_aggregation,
+        )
+    elif use_tta:
+        y_true, y_pred, y_prob = get_predictions_with_tta(
+            model=model,
+            dataloader=test_loader,
+            device=device,
+            tta_mode=tta_mode,
+            aggregation=tta_aggregation,
+        )
+    else:
+        y_true, y_pred, y_prob = get_predictions(model, test_loader, device)
     
     # Class names in order
     class_names = [IDX_TO_LABEL[i] for i in range(len(CLASS_LABELS))]
@@ -539,6 +804,19 @@ def evaluate(
     plot_per_class_metrics(metrics, class_names, output_dir / "per_class_metrics.png")
     
     # Save metrics to JSON
+    metrics["evaluation_mode"] = eval_mode
+    if use_tta:
+        metrics["tta_config"] = {
+            "mode": tta_mode,
+            "aggregation": tta_aggregation,
+        }
+    if use_ensemble or isinstance(checkpoint_path, list):
+        metrics["ensemble_config"] = {
+            "num_models": len(models),
+            "aggregation": ensemble_aggregation,
+            "weights": ensemble_weights,
+        }
+    
     metrics_path = output_dir / "evaluation_metrics.json"
     with open(metrics_path, "w") as f:
         json.dump(metrics, f, indent=2)
@@ -548,6 +826,7 @@ def evaluate(
     print("\n" + "=" * 60)
     print("EVALUATION SUMMARY")
     print("=" * 60)
+    print(f"Mode:               {eval_mode}")
     print(f"Accuracy:           {metrics['accuracy']:.4f}")
     print(f"Macro Precision:    {metrics['macro_precision']:.4f}")
     print(f"Macro Recall:       {metrics['macro_recall']:.4f}")
@@ -573,13 +852,14 @@ def evaluate(
 def main() -> None:
     """Main entry point."""
     parser = argparse.ArgumentParser(
-        description="Evaluate skin lesion classifier"
+        description="Evaluate skin lesion classifier with optional TTA and Ensemble"
     )
     parser.add_argument(
         "--checkpoint",
         type=Path,
+        nargs="+",
         required=True,
-        help="Path to model checkpoint",
+        help="Path(s) to model checkpoint(s). Multiple checkpoints enable ensemble.",
     )
     parser.add_argument(
         "--test-csv",
@@ -611,15 +891,54 @@ def main() -> None:
         default=4,
         help="Number of data loading workers",
     )
+    parser.add_argument(
+        "--use-tta",
+        action="store_true",
+        help="Use test-time augmentation",
+    )
+    parser.add_argument(
+        "--tta-mode",
+        choices=["light", "medium", "full"],
+        default="medium",
+        help="TTA complexity (light: 4 augs, medium: 8 augs, full: all)",
+    )
+    parser.add_argument(
+        "--tta-aggregation",
+        choices=["mean", "geometric_mean", "max"],
+        default="mean",
+        help="How to aggregate TTA predictions",
+    )
+    parser.add_argument(
+        "--ensemble-weights",
+        type=float,
+        nargs="+",
+        help="Optional weights for ensemble models (must match number of checkpoints)",
+    )
+    parser.add_argument(
+        "--ensemble-aggregation",
+        choices=["mean", "weighted_mean", "geometric_mean"],
+        default="weighted_mean",
+        help="How to aggregate ensemble predictions",
+    )
     args = parser.parse_args()
     
+    # Determine if using ensemble
+    use_ensemble = len(args.checkpoint) > 1
+    checkpoint_path = args.checkpoint if use_ensemble else args.checkpoint[0]
+    
     evaluate(
-        checkpoint_path=args.checkpoint,
+        checkpoint_path=checkpoint_path,
         test_csv=args.test_csv,
         images_dir=args.images_dir,
         output_dir=args.output,
         batch_size=args.batch_size,
         num_workers=args.num_workers,
+        use_tta=args.use_tta,
+        tta_mode=args.tta_mode,
+        tta_aggregation=args.tta_aggregation,
+        use_ensemble=use_ensemble,
+        ensemble_weights=args.ensemble_weights,
+        ensemble_aggregation=args.ensemble_aggregation,
     )
 
 
