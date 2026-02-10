@@ -320,11 +320,10 @@ def main():
     print(f"  ✓ Batches per epoch: {len(train_loader)}")
     
     # Create model
-    print("\n🤖 Creating model...")
+    print("\n🤖 Creating model (EfficientNet-V2-S)...")
     model_config = config.get("model", {})
     model = create_model(
         num_classes=model_config.get("num_classes", 7),
-        model_size=model_config.get("size", "small"),
         pretrained=model_config.get("pretrained", True),
         dropout_rate=model_config.get("dropout_rate", 0.3),
         freeze_backbone=model_config.get("freeze_backbone", False),

@@ -443,8 +443,7 @@ class SkinLesionPredictor:
         """Get information about the loaded model."""
         model_config = self.config.get("model", {})
         return {
-            "model_name": "EfficientNet-V2",
-            "model_size": model_config.get("size", "small"),
+            "model_name": "EfficientNet-V2-S",
             "num_classes": model_config.get("num_classes", 7),
             "image_size": self.image_size,
             "device": str(self.device),
