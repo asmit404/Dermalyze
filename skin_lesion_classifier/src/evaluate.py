@@ -61,10 +61,62 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+def compute_ensemble_weights_from_metrics(
+    metrics_list: List[Dict[str, float]],
+    metric_name: str = "val_acc",
+) -> np.ndarray:
+    """
+    Compute ensemble weights based on validation metrics.
+    
+    Args:
+        metrics_list: List of metric dictionaries from checkpoints
+        metric_name: Metric to use for weighting (val_acc or val_loss)
+        
+    Returns:
+        Normalized weights array
+    """
+    # Extract the metric values
+    metric_values = []
+    for metrics in metrics_list:
+        value = metrics.get(metric_name)
+        if value is None:
+            # Try alternate metric names
+            if metric_name == "val_acc":
+                value = metrics.get("val_accuracy", metrics.get("accuracy"))
+            elif metric_name == "val_loss":
+                value = metrics.get("loss")
+        
+        if value is None:
+            # If no metrics found, fall back to uniform weights
+            logger.warning(
+                f"Metric '{metric_name}' not found in checkpoint. "
+                "Using uniform weights instead."
+            )
+            return np.ones(len(metrics_list)) / len(metrics_list)
+        
+        metric_values.append(float(value))
+    
+    metric_values = np.array(metric_values)
+    
+    # Compute weights based on metric
+    if "loss" in metric_name:
+        # For loss, lower is better - use inverse
+        # Add small epsilon to avoid division by zero
+        weights = 1.0 / (metric_values + 1e-8)
+    else:
+        # For accuracy, higher is better - use directly
+        weights = metric_values
+    
+    # Normalize to sum to 1
+    weights = weights / weights.sum()
+    
+    return weights
+
+
 def load_model(
     checkpoint_path: Path,
     device: torch.device,
-) -> Tuple[SkinLesionClassifier, Dict[str, Any]]:
+) -> Tuple[SkinLesionClassifier, Dict[str, Any], Dict[str, float]]:
     """
     Load a trained model from checkpoint.
     
@@ -73,10 +125,11 @@ def load_model(
         device: Device to load model on
         
     Returns:
-        Tuple of (model, config)
+        Tuple of (model, config, metrics)
     """
     checkpoint = torch.load(checkpoint_path, map_location=device)
     config = checkpoint.get("config", {})
+    metrics = checkpoint.get("metrics", {})
     
     # Create model with config
     model_config = config.get("model", {})
@@ -91,7 +144,7 @@ def load_model(
     model = model.to(device)
     model.eval()
     
-    return model, config
+    return model, config, metrics
 
 
 @torch.no_grad()
@@ -683,12 +736,23 @@ def evaluate(
     Evaluate a trained model on test data.
     
     Args:
-        checkpoint_path: Path to model checkpoint
+        checkpoint_path: Path to model checkpoint (or list for ensemble)
         test_csv: Path to test CSV file
         images_dir: Path to images directory
         output_dir: Output directory for results
         batch_size: Batch size for evaluation
         num_workers: Number of data loading workers
+        use_tta: Whether to use test-time augmentation
+        tta_mode: TTA complexity (light/medium/full)
+        tta_aggregation: How to aggregate TTA predictions
+        use_ensemble: Whether to use ensemble evaluation
+        ensemble_weights: Optional custom weights for models. If None and 
+            ensemble_aggregation='weighted_mean', weights are automatically
+            computed from validation accuracy in checkpoints.
+        ensemble_aggregation: How to aggregate ensemble predictions
+            - 'mean': Uniform averaging
+            - 'weighted_mean': Weight by val accuracy (auto-computed if no weights)
+            - 'geometric_mean': Geometric average
         
     Returns:
         Dictionary of evaluation results
@@ -706,20 +770,35 @@ def evaluate(
         
         logger.info(f"Loading ensemble of {len(checkpoint_path)} models...")
         models = []
+        metrics_list = []
         for i, cp in enumerate(checkpoint_path):
-            model, config = load_model(Path(cp), device)
+            model, config, metrics = load_model(Path(cp), device)
             models.append(model)
+            metrics_list.append(metrics)
             logger.info(f"  Model {i+1}: {cp}")
         
+        # Compute weights
         if ensemble_weights:
             logger.info(f"Using custom ensemble weights: {ensemble_weights}")
+        elif ensemble_aggregation == "weighted_mean":
+            # Automatically compute weights from validation metrics
+            logger.info("Computing ensemble weights from validation metrics...")
+            ensemble_weights = compute_ensemble_weights_from_metrics(
+                metrics_list, metric_name="val_acc"
+            )
+            logger.info(f"Auto-computed ensemble weights: {ensemble_weights}")
+            # Log which model has highest weight
+            best_idx = np.argmax(ensemble_weights)
+            logger.info(
+                f"  Highest weight (model {best_idx+1}): {ensemble_weights[best_idx]:.4f}"
+            )
         
         eval_mode = "ensemble"
         if use_tta:
             eval_mode += f" + TTA-{tta_mode}"
     else:
         logger.info(f"Loading model from: {checkpoint_path}")
-        model, config = load_model(checkpoint_path, device)
+        model, config, metrics = load_model(checkpoint_path, device)
         eval_mode = "standard"
         if use_tta:
             eval_mode = f"TTA-{tta_mode}"
