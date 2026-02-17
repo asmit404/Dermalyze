@@ -186,6 +186,7 @@ class SkinLesionPredictor:
         
         # Load weights
         model.load_state_dict(checkpoint["model_state_dict"])
+        
         model = model.to(self.device)
         model.eval()
         
@@ -208,7 +209,9 @@ class SkinLesionPredictor:
         if isinstance(image, bytes):
             image = Image.open(io.BytesIO(image)).convert("RGB")
         
-        return preprocess_image(image, self.image_size).to(self.device)
+        tensor = preprocess_image(image, self.image_size).to(self.device)
+        
+        return tensor
     
     @torch.no_grad()
     def predict(
@@ -240,6 +243,10 @@ class SkinLesionPredictor:
         # Forward pass
         logits = self.model(tensor)
         probs = F.softmax(logits, dim=1)[0]
+        
+        # Synchronize MPS for accurate results
+        if self.device.type == "mps":
+            torch.mps.synchronize()
         
         # Get predictions
         probs_np = probs.cpu().numpy()
