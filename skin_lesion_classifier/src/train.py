@@ -111,14 +111,17 @@ def cutmix_data(
     index = torch.randperm(images.size(0), device=images.device)
 
     bbx1, bby1, bbx2, bby2 = _rand_bbox(images.size(), lam)
-    images[:, :, bby1:bby2, bbx1:bbx2] = images[index, :, bby1:bby2, bbx1:bbx2]
+    
+    # Clone images to avoid in-place modification issues
+    mixed_images = images.clone()
+    mixed_images[:, :, bby1:bby2, bbx1:bbx2] = images[index, :, bby1:bby2, bbx1:bbx2]
 
     # Adjust lambda based on mixed area
     area = (bbx2 - bbx1) * (bby2 - bby1)
     lam = 1.0 - area / (images.size(2) * images.size(3))
     targets_a = targets
     targets_b = targets[index]
-    return images, targets_a, targets_b, lam
+    return mixed_images, targets_a, targets_b, lam
 
 
 def load_config(config_path: Path | str) -> Dict[str, Any]:
@@ -133,9 +136,14 @@ def get_device() -> torch.device:
     if torch.cuda.is_available():
         device = torch.device("cuda")
         logger.info(f"Using CUDA: {torch.cuda.get_device_name(0)}")
+        # Enable TF32 for better performance on Ampere+ GPUs
+        torch.backends.cuda.matmul.allow_tf32 = True
+        torch.backends.cudnn.allow_tf32 = True
     elif torch.backends.mps.is_available():
         device = torch.device("mps")
         logger.info("Using Apple MPS")
+        # MPS-specific optimizations
+        os.environ['PYTORCH_MPS_HIGH_WATERMARK_RATIO'] = '0.0'  # Better memory management
     else:
         device = torch.device("cpu")
         logger.info("Using CPU")
@@ -276,6 +284,7 @@ def train_one_epoch(
     cutmix_alpha: float = 0.0,
     mixup_prob: float = 0.0,
     cutmix_prob: float = 0.5,
+    gradient_accumulation_steps: int = 1,
 ) -> Dict[str, float]:
     """
     Train the model for one epoch.
@@ -300,8 +309,17 @@ def train_one_epoch(
     metrics = MetricTracker()
 
     pbar = tqdm(train_loader, desc=f"Epoch {epoch} [Train]", leave=False)
+    
+    # Ensure model parameters are contiguous for MPS efficiency
+    if device.type == "mps":
+        for param in model.parameters():
+            if param.requires_grad and not param.is_contiguous():
+                param.data = param.data.contiguous()
 
     for batch_idx, (images, targets) in enumerate(pbar):
+        # Ensure tensors are contiguous before transfer for MPS
+        if not images.is_contiguous():
+            images = images.contiguous()
         images = images.to(device, non_blocking=True)
         targets = targets.to(device, non_blocking=True)
 
@@ -322,7 +340,9 @@ def train_one_epoch(
             targets_a = targets_b = targets
             lam = 1.0
 
-        optimizer.zero_grad(set_to_none=True)
+        # Gradient accumulation: only zero grads at the start of accumulation
+        if batch_idx % gradient_accumulation_steps == 0:
+            optimizer.zero_grad(set_to_none=True)
 
         # Forward pass with mixed precision
         if use_amp and device.type == "cuda":
@@ -335,14 +355,20 @@ def train_one_epoch(
                 else:
                     loss = criterion(outputs, targets)
 
+            # Scale loss for gradient accumulation
+            loss = loss / gradient_accumulation_steps
+            
             # Backward pass with gradient scaling
             scaler.scale(loss).backward()
-            scaler.unscale_(optimizer)
-            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
-            scaler.step(optimizer)
-            scaler.update()
-            if ema is not None:
-                ema.update(model)
+            
+            # Only step optimizer after accumulating gradients
+            if (batch_idx + 1) % gradient_accumulation_steps == 0 or (batch_idx + 1) == len(train_loader):
+                scaler.unscale_(optimizer)
+                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+                scaler.step(optimizer)
+                scaler.update()
+                if ema is not None:
+                    ema.update(model)
         else:
             outputs = model(images)
             if use_mix:
@@ -351,20 +377,31 @@ def train_one_epoch(
                 )
             else:
                 loss = criterion(outputs, targets)
+            
+            # Scale loss for gradient accumulation
+            loss = loss / gradient_accumulation_steps
             loss.backward()
-            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
-            optimizer.step()
-            if ema is not None:
-                ema.update(model)
+            
+            # Only step optimizer after accumulating gradients
+            if (batch_idx + 1) % gradient_accumulation_steps == 0 or (batch_idx + 1) == len(train_loader):
+                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+                optimizer.step()
+                if ema is not None:
+                    ema.update(model)
+                    
+                # MPS synchronization for accurate timing
+                if device.type == "mps":
+                    torch.mps.synchronize()
 
-        # Update learning rate if using OneCycleLR
-        if scheduler is not None and isinstance(scheduler, OneCycleLR):
-            scheduler.step()
+        # Update learning rate if using OneCycleLR (only after optimizer step)
+        if (batch_idx + 1) % gradient_accumulation_steps == 0 or (batch_idx + 1) == len(train_loader):
+            if scheduler is not None and isinstance(scheduler, OneCycleLR):
+                scheduler.step()
 
-        # Update metrics
+        # Update metrics (scale loss back up for reporting)
         preds = torch.argmax(outputs, dim=1)
         metric_targets = targets_a if use_mix else targets
-        metrics.update(loss.item(), preds, metric_targets)
+        metrics.update(loss.item() * gradient_accumulation_steps, preds, metric_targets)
 
         # Update progress bar
         current_metrics = metrics.compute()
@@ -405,6 +442,9 @@ def validate(
     pbar = tqdm(val_loader, desc=f"Epoch {epoch} [Val]", leave=False)
 
     for images, targets in pbar:
+        # Ensure contiguous tensors for MPS
+        if not images.is_contiguous():
+            images = images.contiguous()
         images = images.to(device, non_blocking=True)
         targets = targets.to(device, non_blocking=True)
 
@@ -421,6 +461,10 @@ def validate(
                 "acc": f"{current_metrics['accuracy']:.4f}",
             }
         )
+    
+    # MPS synchronization before returning metrics
+    if device.type == "mps":
+        torch.mps.synchronize()
 
     return metrics.compute()
 
@@ -558,6 +602,11 @@ def train(
     cutmix_alpha = float(train_config.get("cutmix_alpha", 0.0) or 0.0)
     mixup_prob = float(train_config.get("mixup_prob", 0.0) or 0.0)
     cutmix_prob = float(train_config.get("cutmix_prob", 0.5) or 0.5)
+    gradient_accumulation_steps = int(train_config.get("gradient_accumulation_steps", 1) or 1)
+    if use_amp:
+        logger.info("Using Automatic Mixed Precision (AMP)")
+    if gradient_accumulation_steps > 1:
+        logger.info(f"Using gradient accumulation: {gradient_accumulation_steps} steps")
 
     # Optional two-stage fine-tuning (head warmup -> full fine-tune)
     stage1_epochs = int(train_config.get("stage1_epochs", 0) or 0)
@@ -596,6 +645,9 @@ def train(
         image_size=config.get("model", {}).get("image_size", 224),
         augmentation_strength=train_config.get("augmentation", "medium"),
         use_weighted_sampling=train_config.get("use_weighted_sampling", True),
+        pin_memory=(device.type != "cpu"),  # Pin memory for faster transfers to GPU
+        prefetch_factor=train_config.get("prefetch_factor", 2),
+        persistent_workers=train_config.get("persistent_workers", True),
     )
 
     # Calculate class weights for loss function
@@ -605,13 +657,19 @@ def train(
 
     # Create model
     model_config = config.get("model", {})
+    use_gradient_checkpointing = train_config.get("use_gradient_checkpointing", False)
     logger.info("Creating model (EfficientNet-B0)...")
     model = create_model(
         num_classes=model_config.get("num_classes", 7),
         pretrained=model_config.get("pretrained", True),
         dropout_rate=model_config.get("dropout_rate", 0.3),
         freeze_backbone=model_config.get("freeze_backbone", False),
+        use_gradient_checkpointing=use_gradient_checkpointing,
     )
+    
+    if use_gradient_checkpointing:
+        logger.info("Gradient checkpointing enabled (reduces memory usage)")
+    
     model = model.to(device)
 
     ema = ModelEMA(model, decay=ema_decay) if ema_enabled else None
@@ -773,6 +831,7 @@ def train(
                 cutmix_alpha=cutmix_alpha,
                 mixup_prob=mixup_prob,
                 cutmix_prob=cutmix_prob,
+                gradient_accumulation_steps=gradient_accumulation_steps,
             )
 
             if ema is not None and ema_use_for_eval:

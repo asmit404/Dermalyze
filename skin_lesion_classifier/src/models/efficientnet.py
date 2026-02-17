@@ -12,6 +12,7 @@ from typing import Literal, Optional, Tuple
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch.utils.checkpoint import checkpoint
 from torchvision import models
 from torchvision.models import EfficientNet_B0_Weights
 
@@ -36,6 +37,7 @@ class SkinLesionClassifier(nn.Module):
         dropout_rate: float = 0.3,
         freeze_backbone: bool = False,
         freeze_layers: Optional[int] = None,
+        use_gradient_checkpointing: bool = False,
     ):
         """
         Initialize the skin lesion classifier.
@@ -46,10 +48,12 @@ class SkinLesionClassifier(nn.Module):
             dropout_rate: Dropout rate for regularization
             freeze_backbone: Whether to freeze all backbone layers
             freeze_layers: Number of backbone layers to freeze (from the start)
+            use_gradient_checkpointing: Whether to use gradient checkpointing (saves memory)
         """
         super().__init__()
 
         self.num_classes = num_classes
+        self.use_gradient_checkpointing = use_gradient_checkpointing
 
         # Load pretrained backbone (EfficientNet-B0)
         self.backbone, self.feature_dim = self._create_backbone(pretrained)
@@ -130,7 +134,11 @@ class SkinLesionClassifier(nn.Module):
             Logits tensor of shape (batch_size, num_classes)
         """
         # Extract features from backbone
-        features = self.backbone(x)
+        if self.use_gradient_checkpointing and self.training:
+            # Use gradient checkpointing for memory efficiency
+            features = checkpoint(self.backbone, x, use_reentrant=False)
+        else:
+            features = self.backbone(x)
 
         # Classify
         logits = self.classifier(features)
@@ -306,6 +314,7 @@ def create_model(
     pretrained: bool = True,
     dropout_rate: float = 0.3,
     freeze_backbone: bool = False,
+    use_gradient_checkpointing: bool = False,
 ) -> SkinLesionClassifier:
     """
     Factory function to create a skin lesion classifier.
@@ -315,6 +324,7 @@ def create_model(
         pretrained: Whether to use pretrained weights
         dropout_rate: Dropout rate for regularization
         freeze_backbone: Whether to freeze backbone layers
+        use_gradient_checkpointing: Whether to use gradient checkpointing (saves memory)
 
     Returns:
         Configured SkinLesionClassifier model with EfficientNet-B0 backbone
@@ -324,6 +334,7 @@ def create_model(
         pretrained=pretrained,
         dropout_rate=dropout_rate,
         freeze_backbone=freeze_backbone,
+        use_gradient_checkpointing=use_gradient_checkpointing,
     )
 
 
