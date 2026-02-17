@@ -645,7 +645,7 @@ def train(
         image_size=config.get("model", {}).get("image_size", 224),
         augmentation_strength=train_config.get("augmentation", "medium"),
         use_weighted_sampling=train_config.get("use_weighted_sampling", True),
-        pin_memory=(device.type != "cpu"),  # Pin memory for faster transfers to GPU
+        pin_memory=(device.type == "cuda"),  # Pin memory only works on CUDA
         prefetch_factor=train_config.get("prefetch_factor", 2),
         persistent_workers=train_config.get("persistent_workers", True),
     )

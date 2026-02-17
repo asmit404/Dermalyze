@@ -760,7 +760,12 @@ def evaluate(
     output_dir.mkdir(parents=True, exist_ok=True)
     
     # Get device
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    if torch.cuda.is_available():
+        device = torch.device("cuda")
+    elif torch.backends.mps.is_available():
+        device = torch.device("mps")
+    else:
+        device = torch.device("cpu")
     logger.info(f"Using device: {device}")
     
     # Load model(s)
@@ -822,7 +827,7 @@ def evaluate(
         batch_size=batch_size,
         shuffle=False,
         num_workers=num_workers,
-        pin_memory=True,
+        pin_memory=(device.type == "cuda"),  # Pin memory only works on CUDA
     )
     
     logger.info(f"Test samples: {len(test_dataset)}")
