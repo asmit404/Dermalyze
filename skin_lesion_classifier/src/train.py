@@ -1,7 +1,7 @@
 """
 Training Module for Skin Lesion Classification.
 
-This script provides a complete training pipeline for the EfficientNet-V2
+This script provides a complete training pipeline for the EfficientNet-B0
 based skin lesion classifier, including:
 - Configuration management
 - Data loading and augmentation
@@ -605,7 +605,7 @@ def train(
 
     # Create model
     model_config = config.get("model", {})
-    logger.info("Creating model (EfficientNet-V2-S)...")
+    logger.info("Creating model (EfficientNet-B0)...")
     model = create_model(
         num_classes=model_config.get("num_classes", 7),
         pretrained=model_config.get("pretrained", True),

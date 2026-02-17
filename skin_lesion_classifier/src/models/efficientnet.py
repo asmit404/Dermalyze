@@ -1,7 +1,7 @@
 """
-EfficientNet-V2 Model for Skin Lesion Classification.
+EfficientNet-B0 Model for Skin Lesion Classification.
 
-This module provides the model architecture based on EfficientNet-V2 with
+This module provides the model architecture based on EfficientNet-B0 with
 a custom classification head for the HAM10000 seven-class classification task.
 """
 
@@ -13,18 +13,18 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torchvision import models
-from torchvision.models import EfficientNet_V2_S_Weights
+from torchvision.models import EfficientNet_B0_Weights
 
 
 class SkinLesionClassifier(nn.Module):
     """
-    EfficientNet-V2-S based classifier for skin lesion classification.
+    EfficientNet-B0 based classifier for skin lesion classification.
 
-    This model uses a pretrained EfficientNet-V2-S backbone with a custom
+    This model uses a pretrained EfficientNet-B0 backbone with a custom
     classification head optimized for the HAM10000 dataset.
 
     Attributes:
-        backbone: EfficientNet-V2-S feature extractor
+        backbone: EfficientNet-B0 feature extractor
         classifier: Custom classification head
         num_classes: Number of output classes (default: 7 for HAM10000)
     """
@@ -51,7 +51,7 @@ class SkinLesionClassifier(nn.Module):
 
         self.num_classes = num_classes
 
-        # Load pretrained backbone (EfficientNet-V2-S)
+        # Load pretrained backbone (EfficientNet-B0)
         self.backbone, self.feature_dim = self._create_backbone(pretrained)
 
         # Custom classification head with dropout for regularization
@@ -79,9 +79,9 @@ class SkinLesionClassifier(nn.Module):
             self._freeze_layers(freeze_layers)
 
     def _create_backbone(self, pretrained: bool) -> Tuple[nn.Module, int]:
-        """Create the EfficientNet-V2-S backbone."""
-        weights = EfficientNet_V2_S_Weights.IMAGENET1K_V1 if pretrained else None
-        backbone = models.efficientnet_v2_s(weights=weights)
+        """Create the EfficientNet-B0 backbone."""
+        weights = EfficientNet_B0_Weights.IMAGENET1K_V1 if pretrained else None
+        backbone = models.efficientnet_b0(weights=weights)
         feature_dim = 1280
 
         # Remove the original classifier
@@ -317,7 +317,7 @@ def create_model(
         freeze_backbone: Whether to freeze backbone layers
 
     Returns:
-        Configured SkinLesionClassifier model with EfficientNet-V2-S backbone
+        Configured SkinLesionClassifier model with EfficientNet-B0 backbone
     """
     return SkinLesionClassifier(
         num_classes=num_classes,
