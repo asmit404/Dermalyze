@@ -18,7 +18,7 @@ import numpy as np
 import pandas as pd
 import torch
 from PIL import Image
-from sklearn.model_selection import GroupShuffleSplit, train_test_split
+from sklearn.model_selection import GroupShuffleSplit, StratifiedGroupKFold, train_test_split
 from torch.utils.data import DataLoader, Dataset, WeightedRandomSampler
 from torchvision import transforms
 
@@ -273,6 +273,10 @@ def load_and_split_data(
     test_size: float = 0.15,
     random_state: int = 42,
     lesion_aware: bool = True,
+    use_stratified_group_kfold: bool = False,
+    kfold_n_splits: int = 5,
+    kfold_fold_index: int = 0,
+    kfold_group_column: str = "lesion_id",
 ) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """
     Load the HAM10000 metadata and split into train/val/test sets.
@@ -280,6 +284,11 @@ def load_and_split_data(
     Uses lesion-aware splitting to prevent data leakage (images of the same
     lesion stay in the same split). Falls back to stratified splitting if
     lesion_id is not available.
+
+    Optional StratifiedGroupKFold mode can be enabled for train/validation
+    splitting. In this mode, a holdout test split is created first (if
+    test_size > 0), then StratifiedGroupKFold is applied to the remaining data.
+    val_size is ignored in this mode.
     
     Args:
         labels_csv: Path to CSV with image_id, label, and optionally lesion_id
@@ -288,6 +297,11 @@ def load_and_split_data(
         test_size: Proportion of data for testing
         random_state: Random seed for reproducibility
         lesion_aware: Whether to use lesion-aware splitting
+        use_stratified_group_kfold: Whether to use StratifiedGroupKFold for
+            train/validation splits
+        kfold_n_splits: Number of folds for StratifiedGroupKFold
+        kfold_fold_index: Which fold to use as validation (0-indexed)
+        kfold_group_column: Column name used as group identifier
         
     Returns:
         Tuple of (train_df, val_df, test_df)
@@ -304,6 +318,54 @@ def load_and_split_data(
     if invalid_labels:
         raise ValueError(f"Invalid labels found: {invalid_labels}")
     
+    if use_stratified_group_kfold:
+        if kfold_n_splits < 2:
+            raise ValueError("kfold_n_splits must be >= 2 for StratifiedGroupKFold")
+        if kfold_fold_index < 0 or kfold_fold_index >= kfold_n_splits:
+            raise ValueError(
+                f"kfold_fold_index must be in [0, {kfold_n_splits - 1}], got {kfold_fold_index}"
+            )
+        if kfold_group_column not in df.columns:
+            raise ValueError(
+                f"Column '{kfold_group_column}' is required for StratifiedGroupKFold"
+            )
+
+        # Optional holdout test split first (group-aware)
+        if test_size > 0:
+            gss_test = GroupShuffleSplit(
+                n_splits=1, test_size=test_size, random_state=random_state
+            )
+            train_val_idx, test_idx = next(
+                gss_test.split(df, df["label"], groups=df[kfold_group_column])
+            )
+            train_val_df = df.iloc[train_val_idx]
+            test_df = df.iloc[test_idx]
+        else:
+            train_val_df = df
+            test_df = df.iloc[0:0].copy()
+
+        sgkf = StratifiedGroupKFold(
+            n_splits=kfold_n_splits,
+            shuffle=True,
+            random_state=random_state,
+        )
+        split_indices = list(
+            sgkf.split(
+                train_val_df,
+                train_val_df["label"],
+                groups=train_val_df[kfold_group_column],
+            )
+        )
+        train_idx, val_idx = split_indices[kfold_fold_index]
+        train_df = train_val_df.iloc[train_idx]
+        val_df = train_val_df.iloc[val_idx]
+
+        return (
+            train_df.reset_index(drop=True),
+            val_df.reset_index(drop=True),
+            test_df.reset_index(drop=True),
+        )
+
     # Check for lesion_id column for lesion-aware splitting
     has_lesion_id = "lesion_id" in df.columns and lesion_aware
     

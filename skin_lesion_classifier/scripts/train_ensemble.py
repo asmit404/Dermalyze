@@ -27,13 +27,19 @@ from typing import List
 import yaml
 
 
-def create_temp_config(base_config_path: Path, seed: int) -> Path:
-    """Create a temporary config file with modified seed."""
+def create_temp_config(base_config_path: Path, seed: int, fold_index: int) -> Path:
+    """Create a temporary config file with modified seed and fold index."""
     with open(base_config_path, 'r') as f:
         config = yaml.safe_load(f)
     
     # Modify seed
     config['training']['seed'] = seed
+
+    # Ensure k-fold config exists and set fold index for this model
+    data_cfg = config.setdefault('data', {})
+    data_cfg['use_stratified_group_kfold'] = True
+    kfold_cfg = data_cfg.setdefault('kfold', {})
+    kfold_cfg['fold_index'] = fold_index
     
     # Write to temporary file
     temp_file = tempfile.NamedTemporaryFile(
@@ -50,6 +56,7 @@ def train_model(
     output_dir: Path,
     model_name: str,
     seed: int,
+    fold_index: int,
     model_idx: int,
     total_models: int
 ) -> bool:
@@ -58,11 +65,12 @@ def train_model(
     print(f"Training Model {model_idx + 1}/{total_models}: {model_name}")
     print(f"{'='*60}")
     print(f"Seed: {seed}")
+    print(f"Fold index: {fold_index}")
     print(f"Output: {output_dir}")
     print()
     
-    # Create temporary config with modified seed
-    temp_config = create_temp_config(config_path, seed)
+    # Create temporary config with modified seed/fold
+    temp_config = create_temp_config(config_path, seed, fold_index)
     
     try:
         # Train the model
@@ -176,6 +184,12 @@ def main():
         default=Path('config.yaml'),
         help='Base config file (default: config.yaml)'
     )
+    parser.add_argument(
+        '--start-fold',
+        type=int,
+        default=0,
+        help='Starting fold index; models use consecutive folds (default: 0)'
+    )
     
     args = parser.parse_args()
     
@@ -186,6 +200,29 @@ def main():
     
     # Model names
     model_names = ['model_1', 'model_2', 'model_3']
+
+    # Read k-fold setup from config (required for fold-diverse ensemble)
+    with open(args.config, 'r') as f:
+        base_config = yaml.safe_load(f)
+    data_cfg = base_config.get('data', {}) if isinstance(base_config, dict) else {}
+    kfold_cfg = data_cfg.get('kfold', {}) if isinstance(data_cfg, dict) else {}
+    n_splits = int(kfold_cfg.get('n_splits', 5) or 5)
+
+    if n_splits < len(model_names):
+        print(
+            f"✗ data.kfold.n_splits ({n_splits}) must be >= number of models ({len(model_names)}) "
+            "for unique fold assignment."
+        )
+        sys.exit(1)
+
+    if args.start_fold < 0 or args.start_fold >= n_splits:
+        print(f"✗ --start-fold must be in [0, {n_splits - 1}], got {args.start_fold}")
+        sys.exit(1)
+
+    fold_indices = [(args.start_fold + i) % n_splits for i in range(len(model_names))]
+    if len(set(fold_indices)) != len(fold_indices):
+        print("✗ Computed fold indices are not unique. Increase n_splits or adjust start fold.")
+        sys.exit(1)
     
     print("="*60)
     print("Training Ensemble of 3 Models")
@@ -193,6 +230,7 @@ def main():
     print()
     print(f"Base output directory: {args.output}")
     print(f"Random seeds: {args.seeds}")
+    print(f"Fold indices: {fold_indices} (n_splits={n_splits})")
     print()
     
     # Create base output directory
@@ -204,13 +242,16 @@ def main():
         'created_at': datetime.now().isoformat(),
         'num_models': 3,
         'seeds': args.seeds,
+        'fold_indices': fold_indices,
+        'kfold_n_splits': n_splits,
         'models': [
             {
                 'name': name,
                 'seed': seed,
+                'fold_index': fold_index,
                 'output_dir': str(args.output / name)
             }
-            for name, seed in zip(model_names, args.seeds)
+            for name, seed, fold_index in zip(model_names, args.seeds, fold_indices)
         ]
     }
     
@@ -223,7 +264,7 @@ def main():
     
     # Train each model
     model_dirs = []
-    for i, (name, seed) in enumerate(zip(model_names, args.seeds)):
+    for i, (name, seed, fold_index) in enumerate(zip(model_names, args.seeds, fold_indices)):
         output_dir = args.output / name
         model_dirs.append(output_dir)
         
@@ -232,6 +273,7 @@ def main():
             output_dir=output_dir,
             model_name=name,
             seed=seed,
+            fold_index=fold_index,
             model_idx=i,
             total_models=3
         )
@@ -250,9 +292,9 @@ def main():
     print(f"Ensemble directory: {args.output}")
     print()
     print("Trained models:")
-    for i, (name, seed, model_dir) in enumerate(zip(model_names, args.seeds, model_dirs)):
+    for i, (name, seed, fold_index, model_dir) in enumerate(zip(model_names, args.seeds, fold_indices, model_dirs)):
         checkpoint = model_dir / 'checkpoint_best.pt'
-        print(f"  {i + 1}. {name} (seed={seed})")
+        print(f"  {i + 1}. {name} (seed={seed}, fold_index={fold_index})")
         print(f"     {checkpoint}")
     print()
     

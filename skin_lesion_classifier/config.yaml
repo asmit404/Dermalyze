@@ -8,10 +8,15 @@
 data:
   images_dir: data/HAM10000/images
   labels_csv: data/HAM10000/labels.csv
-  split_seed: 42 
+  split_seed: 42
   val_size: 0.15
   test_size: 0.15
   lesion_aware: true
+  use_stratified_group_kfold: true
+  kfold:
+    n_splits: 5
+    fold_index: 0
+    group_column: lesion_id
 
 # -----------------------------------------------------------------------------
 # Model Configuration
@@ -30,63 +35,63 @@ training:
   seed: 42
   batch_size: 16
   epochs: 40
-  lr: 0.0003
+  lr: 0.00025
   weight_decay: 0.02
-  
+
   # Two-Stage Training
-  stage1_epochs: 8
-  stage1_lr: 0.0001
+  stage1_epochs: 5
+  stage1_lr: 0.001
   stage1_weight_decay: 0.01
-  stage2_epochs: 32
+  stage2_epochs: 35
   stage_epoch_mode: fit_total
-  stage2_lr: 0.0003
-  stage2_weight_decay: 0.03
-  
+  stage2_lr: 0.00025
+  stage2_weight_decay: 0.02
+
   # Data Loading
   num_workers: 4
   prefetch_factor: 2
   persistent_workers: true
   use_weighted_sampling: true
-  sampling_weight_power: 0.4
-  augmentation: heavy
-  
+  sampling_weight_power: 0.35
+  augmentation: light
+
   # Performance Optimizations
   use_amp: false
   use_gradient_checkpointing: true
   gradient_accumulation_steps: 2
-  
+
   # Data Augmentation
   mixup_alpha: 0.1
   cutmix_alpha: 0.1
-  mixup_prob: 0.3
-  cutmix_prob: 0.2
-  
+  mixup_prob: 0.25
+  cutmix_prob: 0.15
+
   # Learning Rate Scheduler
   scheduler:
-    type: onecycle
-    warmup_pct: 0.1
+    type: cosine
+    # warmup_pct: 0.05
     # Cosine scheduler options (if type: cosine):
-    # T_0: 10
-    # T_mult: 2
-    # eta_min: 1e-6
-  
+    T_0: 20
+    T_mult: 1
+    eta_min: 0.00001
+
   # Exponential Moving Average
   ema:
     enabled: true
-    decay: 0.99
+    decay: 0.999
     use_for_eval: true
     save_best: true
-  
+
   # Early Stopping
-  early_stopping_patience: 4
+  early_stopping_patience: 7
 
 # -----------------------------------------------------------------------------
 # Loss Function
 # -----------------------------------------------------------------------------
 loss:
-  type: focal
-  gamma: 1.5
-  class_weight_power: 0.45
+  type: label_smoothing
+  label_smoothing: 0.03
+  class_weight_power: 0.35
 
 # -----------------------------------------------------------------------------
 # Output Configuration

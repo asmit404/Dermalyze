@@ -567,6 +567,22 @@ def train(
     split_seed = data_config.get("split_seed", seed)
     if split_seed != seed:
         logger.info(f"Split seed: {split_seed}")
+    use_stratified_group_kfold = bool(
+        data_config.get("use_stratified_group_kfold", False)
+    )
+    kfold_config = data_config.get("kfold", {})
+    kfold_n_splits = int(kfold_config.get("n_splits", 5) or 5)
+    kfold_fold_index = int(kfold_config.get("fold_index", 0) or 0)
+    kfold_group_column = str(kfold_config.get("group_column", "lesion_id"))
+
+    if use_stratified_group_kfold:
+        logger.info(
+            "Using StratifiedGroupKFold (n_splits=%s, fold_index=%s, group_column=%s)",
+            kfold_n_splits,
+            kfold_fold_index,
+            kfold_group_column,
+        )
+
     labels_csv = Path(data_config.get("labels_csv", "data/HAM10000/labels.csv"))
     images_dir = Path(data_config.get("images_dir", "data/HAM10000/images"))
 
@@ -579,6 +595,10 @@ def train(
         test_size=data_config.get("test_size", 0.15),
         random_state=split_seed,
         lesion_aware=data_config.get("lesion_aware", True),
+        use_stratified_group_kfold=use_stratified_group_kfold,
+        kfold_n_splits=kfold_n_splits,
+        kfold_fold_index=kfold_fold_index,
+        kfold_group_column=kfold_group_column,
     )
 
     logger.info(f"Train samples: {len(train_df)}")

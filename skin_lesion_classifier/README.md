@@ -79,6 +79,14 @@ python src/train.py --resume outputs/run_xxx/checkpoint_latest.pt
 python scripts/train_ensemble.py
 ```
 
+Each ensemble model is automatically assigned a different fold index (`data.kfold.fold_index`) so models train on different train/val folds. You can shift the sequence with `--start-fold`.
+
+**5-fold sweep (folds 0-4) + automatic aggregation:**
+```bash
+python scripts/run_kfold_sweep.py --config config.yaml
+```
+This creates `outputs/kfold_sweep_*/kfold_command_plan.sh` and aggregates fold evaluation metrics into `outputs/kfold_sweep_*/kfold_summary.json`.
+
 **Key config options:**
 - `model.dropout_rate`: 0.35 (regularization)
 - `training.batch_size`: 32
@@ -86,6 +94,8 @@ python scripts/train_ensemble.py
 - `training.lr`: 0.0003
 - `training.use_weighted_sampling`: true (class balance)
 - `loss.type`: cross_entropy, focal, or label_smoothing
+- `data.use_stratified_group_kfold`: true/false (fold-based training split)
+- `data.kfold.n_splits`, `data.kfold.fold_index`, `data.kfold.group_column`
 
 
 ## Evaluation
