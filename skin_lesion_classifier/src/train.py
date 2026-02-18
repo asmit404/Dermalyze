@@ -111,7 +111,7 @@ def cutmix_data(
     index = torch.randperm(images.size(0), device=images.device)
 
     bbx1, bby1, bbx2, bby2 = _rand_bbox(images.size(), lam)
-    
+
     # Clone images to avoid in-place modification issues
     mixed_images = images.clone()
     mixed_images[:, :, bby1:bby2, bbx1:bbx2] = images[index, :, bby1:bby2, bbx1:bbx2]
@@ -143,7 +143,9 @@ def get_device() -> torch.device:
         device = torch.device("mps")
         logger.info("Using Apple MPS")
         # MPS-specific optimizations
-        os.environ['PYTORCH_MPS_HIGH_WATERMARK_RATIO'] = '0.0'  # Better memory management
+        os.environ["PYTORCH_MPS_HIGH_WATERMARK_RATIO"] = (
+            "0.0"  # Better memory management
+        )
     else:
         device = torch.device("cpu")
         logger.info("Using CPU")
@@ -309,7 +311,7 @@ def train_one_epoch(
     metrics = MetricTracker()
 
     pbar = tqdm(train_loader, desc=f"Epoch {epoch} [Train]", leave=False)
-    
+
     # Ensure model parameters are contiguous for MPS efficiency
     if device.type == "mps":
         for param in model.parameters():
@@ -357,12 +359,14 @@ def train_one_epoch(
 
             # Scale loss for gradient accumulation
             loss = loss / gradient_accumulation_steps
-            
+
             # Backward pass with gradient scaling
             scaler.scale(loss).backward()
-            
+
             # Only step optimizer after accumulating gradients
-            if (batch_idx + 1) % gradient_accumulation_steps == 0 or (batch_idx + 1) == len(train_loader):
+            if (batch_idx + 1) % gradient_accumulation_steps == 0 or (
+                batch_idx + 1
+            ) == len(train_loader):
                 scaler.unscale_(optimizer)
                 torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
                 scaler.step(optimizer)
@@ -377,24 +381,28 @@ def train_one_epoch(
                 )
             else:
                 loss = criterion(outputs, targets)
-            
+
             # Scale loss for gradient accumulation
             loss = loss / gradient_accumulation_steps
             loss.backward()
-            
+
             # Only step optimizer after accumulating gradients
-            if (batch_idx + 1) % gradient_accumulation_steps == 0 or (batch_idx + 1) == len(train_loader):
+            if (batch_idx + 1) % gradient_accumulation_steps == 0 or (
+                batch_idx + 1
+            ) == len(train_loader):
                 torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
                 optimizer.step()
                 if ema is not None:
                     ema.update(model)
-                    
+
                 # MPS synchronization for accurate timing
                 if device.type == "mps":
                     torch.mps.synchronize()
 
         # Update learning rate if using OneCycleLR (only after optimizer step)
-        if (batch_idx + 1) % gradient_accumulation_steps == 0 or (batch_idx + 1) == len(train_loader):
+        if (batch_idx + 1) % gradient_accumulation_steps == 0 or (batch_idx + 1) == len(
+            train_loader
+        ):
             if scheduler is not None and isinstance(scheduler, OneCycleLR):
                 scheduler.step()
 
@@ -461,7 +469,7 @@ def validate(
                 "acc": f"{current_metrics['accuracy']:.4f}",
             }
         )
-    
+
     # MPS synchronization before returning metrics
     if device.type == "mps":
         torch.mps.synchronize()
@@ -625,7 +633,9 @@ def train(
     weighted_sampling_power = float(
         train_config.get("sampling_weight_power", 1.0) or 1.0
     )
-    gradient_accumulation_steps = int(train_config.get("gradient_accumulation_steps", 1) or 1)
+    gradient_accumulation_steps = int(
+        train_config.get("gradient_accumulation_steps", 1) or 1
+    )
     if use_amp:
         logger.info("Using Automatic Mixed Precision (AMP)")
     if gradient_accumulation_steps > 1:
@@ -714,10 +724,10 @@ def train(
         freeze_backbone=model_config.get("freeze_backbone", False),
         use_gradient_checkpointing=use_gradient_checkpointing,
     )
-    
+
     if use_gradient_checkpointing:
         logger.info("Gradient checkpointing enabled (reduces memory usage)")
-    
+
     model = model.to(device)
 
     ema = ModelEMA(model, decay=ema_decay) if ema_enabled else None

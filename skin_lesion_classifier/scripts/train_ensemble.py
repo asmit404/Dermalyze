@@ -29,25 +29,25 @@ import yaml
 
 def create_temp_config(base_config_path: Path, seed: int, fold_index: int) -> Path:
     """Create a temporary config file with modified seed and fold index."""
-    with open(base_config_path, 'r') as f:
+    with open(base_config_path, "r") as f:
         config = yaml.safe_load(f)
-    
+
     # Modify seed
-    config['training']['seed'] = seed
+    config["training"]["seed"] = seed
 
     # Ensure k-fold config exists and set fold index for this model
-    data_cfg = config.setdefault('data', {})
-    data_cfg['use_stratified_group_kfold'] = True
-    kfold_cfg = data_cfg.setdefault('kfold', {})
-    kfold_cfg['fold_index'] = fold_index
-    
+    data_cfg = config.setdefault("data", {})
+    data_cfg["use_stratified_group_kfold"] = True
+    kfold_cfg = data_cfg.setdefault("kfold", {})
+    kfold_cfg["fold_index"] = fold_index
+
     # Write to temporary file
     temp_file = tempfile.NamedTemporaryFile(
-        mode='w', suffix='.yaml', delete=False, prefix=f'config_seed{seed}_'
+        mode="w", suffix=".yaml", delete=False, prefix=f"config_seed{seed}_"
     )
     yaml.dump(config, temp_file, default_flow_style=False)
     temp_file.close()
-    
+
     return Path(temp_file.name)
 
 
@@ -58,7 +58,7 @@ def train_model(
     seed: int,
     fold_index: int,
     model_idx: int,
-    total_models: int
+    total_models: int,
 ) -> bool:
     """Train a single model."""
     print(f"\n{'='*60}")
@@ -68,25 +68,28 @@ def train_model(
     print(f"Fold index: {fold_index}")
     print(f"Output: {output_dir}")
     print()
-    
+
     # Create temporary config with modified seed/fold
     temp_config = create_temp_config(config_path, seed, fold_index)
-    
+
     try:
         # Train the model
         print("Starting training...")
         result = subprocess.run(
             [
-                sys.executable, 'src/train.py',
-                '--config', str(temp_config),
-                '--output', str(output_dir)
+                sys.executable,
+                "src/train.py",
+                "--config",
+                str(temp_config),
+                "--output",
+                str(output_dir),
             ],
             check=True,
-            capture_output=False
+            capture_output=False,
         )
-        
+
         # Check if training was successful
-        checkpoint = output_dir / 'checkpoint_best.pt'
+        checkpoint = output_dir / "checkpoint_best.pt"
         if checkpoint.exists():
             print(f"✓ Model {model_name} trained successfully!")
             print(f"  Best checkpoint: {checkpoint}")
@@ -94,7 +97,7 @@ def train_model(
         else:
             print(f"✗ Model {model_name} training failed! No checkpoint found.")
             return False
-            
+
     except subprocess.CalledProcessError as e:
         print(f"✗ Model {model_name} training failed with error!")
         print(f"  Error: {e}")
@@ -106,12 +109,12 @@ def train_model(
 
 def create_evaluation_script(base_dir: Path, model_dirs: List[Path]) -> Path:
     """Create a bash script for ensemble evaluation."""
-    script_path = base_dir / 'evaluate_ensemble.sh'
-    
-    checkpoints = ' \\\n        '.join([
-        f'"{d / "checkpoint_best.pt"}"' for d in model_dirs
-    ])
-    
+    script_path = base_dir / "evaluate_ensemble.sh"
+
+    checkpoints = " \\\n        ".join(
+        [f'"{d / "checkpoint_best.pt"}"' for d in model_dirs]
+    )
+
     script_content = f"""#!/bin/bash
 # Automatically generated ensemble evaluation script
 
@@ -123,21 +126,21 @@ python src/evaluate.py \\
     --output "{base_dir / 'evaluation_results'}" \\
     "$@"
 """
-    
+
     script_path.write_text(script_content)
     script_path.chmod(0o755)
-    
+
     return script_path
 
 
 def create_inference_script(base_dir: Path, model_dirs: List[Path]) -> Path:
     """Create a bash script for ensemble inference."""
-    script_path = base_dir / 'predict_ensemble.sh'
-    
-    checkpoints = ' \\\n        '.join([
-        f'"{d / "checkpoint_best.pt"}"' for d in model_dirs
-    ])
-    
+    script_path = base_dir / "predict_ensemble.sh"
+
+    checkpoints = " \\\n        ".join(
+        [f'"{d / "checkpoint_best.pt"}"' for d in model_dirs]
+    )
+
     script_content = f"""#!/bin/bash
 # Automatically generated ensemble inference script
 
@@ -154,59 +157,59 @@ python src/inference.py \\
         {checkpoints} \\
     --image "${{IMAGE_PATH}}"
 """
-    
+
     script_path.write_text(script_content)
     script_path.chmod(0o755)
-    
+
     return script_path
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description='Train an ensemble of 3 models for skin lesion classification'
+        description="Train an ensemble of 3 models for skin lesion classification"
     )
     parser.add_argument(
-        '--output',
+        "--output",
         type=Path,
         default=None,
-        help='Base output directory for ensemble (default: outputs/ensemble_TIMESTAMP)'
+        help="Base output directory for ensemble (default: outputs/ensemble_TIMESTAMP)",
     )
     parser.add_argument(
-        '--seeds',
+        "--seeds",
         type=int,
         nargs=3,
         default=[7, 13, 21],
-        help='Three random seeds for ensemble diversity (default: 7 13 21)'
+        help="Three random seeds for ensemble diversity (default: 7 13 21)",
     )
     parser.add_argument(
-        '--config',
+        "--config",
         type=Path,
-        default=Path('config.yaml'),
-        help='Base config file (default: config.yaml)'
+        default=Path("config.yaml"),
+        help="Base config file (default: config.yaml)",
     )
     parser.add_argument(
-        '--start-fold',
+        "--start-fold",
         type=int,
         default=0,
-        help='Starting fold index; models use consecutive folds (default: 0)'
+        help="Starting fold index; models use consecutive folds (default: 0)",
     )
-    
+
     args = parser.parse_args()
-    
+
     # Set default output directory
     if args.output is None:
-        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        args.output = Path(f'outputs/ensemble_{timestamp}')
-    
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        args.output = Path(f"outputs/ensemble_{timestamp}")
+
     # Model names
-    model_names = ['model_1', 'model_2', 'model_3']
+    model_names = ["model_1", "model_2", "model_3"]
 
     # Read k-fold setup from config (required for fold-diverse ensemble)
-    with open(args.config, 'r') as f:
+    with open(args.config, "r") as f:
         base_config = yaml.safe_load(f)
-    data_cfg = base_config.get('data', {}) if isinstance(base_config, dict) else {}
-    kfold_cfg = data_cfg.get('kfold', {}) if isinstance(data_cfg, dict) else {}
-    n_splits = int(kfold_cfg.get('n_splits', 5) or 5)
+    data_cfg = base_config.get("data", {}) if isinstance(base_config, dict) else {}
+    kfold_cfg = data_cfg.get("kfold", {}) if isinstance(data_cfg, dict) else {}
+    n_splits = int(kfold_cfg.get("n_splits", 5) or 5)
 
     if n_splits < len(model_names):
         print(
@@ -221,53 +224,57 @@ def main():
 
     fold_indices = [(args.start_fold + i) % n_splits for i in range(len(model_names))]
     if len(set(fold_indices)) != len(fold_indices):
-        print("✗ Computed fold indices are not unique. Increase n_splits or adjust start fold.")
+        print(
+            "✗ Computed fold indices are not unique. Increase n_splits or adjust start fold."
+        )
         sys.exit(1)
-    
-    print("="*60)
+
+    print("=" * 60)
     print("Training Ensemble of 3 Models")
-    print("="*60)
+    print("=" * 60)
     print()
     print(f"Base output directory: {args.output}")
     print(f"Random seeds: {args.seeds}")
     print(f"Fold indices: {fold_indices} (n_splits={n_splits})")
     print()
-    
+
     # Create base output directory
     args.output.mkdir(parents=True, exist_ok=True)
-    
+
     # Save ensemble metadata
     metadata = {
-        'ensemble_name': args.output.name,
-        'created_at': datetime.now().isoformat(),
-        'num_models': 3,
-        'seeds': args.seeds,
-        'fold_indices': fold_indices,
-        'kfold_n_splits': n_splits,
-        'models': [
+        "ensemble_name": args.output.name,
+        "created_at": datetime.now().isoformat(),
+        "num_models": 3,
+        "seeds": args.seeds,
+        "fold_indices": fold_indices,
+        "kfold_n_splits": n_splits,
+        "models": [
             {
-                'name': name,
-                'seed': seed,
-                'fold_index': fold_index,
-                'output_dir': str(args.output / name)
+                "name": name,
+                "seed": seed,
+                "fold_index": fold_index,
+                "output_dir": str(args.output / name),
             }
             for name, seed, fold_index in zip(model_names, args.seeds, fold_indices)
-        ]
+        ],
     }
-    
-    metadata_file = args.output / 'ensemble_metadata.json'
-    with open(metadata_file, 'w') as f:
+
+    metadata_file = args.output / "ensemble_metadata.json"
+    with open(metadata_file, "w") as f:
         json.dump(metadata, f, indent=2)
-    
+
     print(f"✓ Created ensemble metadata: {metadata_file}")
     print()
-    
+
     # Train each model
     model_dirs = []
-    for i, (name, seed, fold_index) in enumerate(zip(model_names, args.seeds, fold_indices)):
+    for i, (name, seed, fold_index) in enumerate(
+        zip(model_names, args.seeds, fold_indices)
+    ):
         output_dir = args.output / name
         model_dirs.append(output_dir)
-        
+
         success = train_model(
             config_path=args.config,
             output_dir=output_dir,
@@ -275,13 +282,13 @@ def main():
             seed=seed,
             fold_index=fold_index,
             model_idx=i,
-            total_models=3
+            total_models=3,
         )
-        
+
         if not success:
             print(f"\n✗ Training failed for model {name}")
             sys.exit(1)
-    
+
     # Summary
     print(f"\n{'='*60}")
     print("Ensemble Training Complete!")
@@ -292,20 +299,22 @@ def main():
     print(f"Ensemble directory: {args.output}")
     print()
     print("Trained models:")
-    for i, (name, seed, fold_index, model_dir) in enumerate(zip(model_names, args.seeds, fold_indices, model_dirs)):
-        checkpoint = model_dir / 'checkpoint_best.pt'
+    for i, (name, seed, fold_index, model_dir) in enumerate(
+        zip(model_names, args.seeds, fold_indices, model_dirs)
+    ):
+        checkpoint = model_dir / "checkpoint_best.pt"
         print(f"  {i + 1}. {name} (seed={seed}, fold_index={fold_index})")
         print(f"     {checkpoint}")
     print()
-    
+
     # Create convenience scripts
     eval_script = create_evaluation_script(args.output, model_dirs)
     print(f"✓ Created evaluation script: {eval_script}")
-    
+
     inference_script = create_inference_script(args.output, model_dirs)
     print(f"✓ Created inference script: {inference_script}")
     print()
-    
+
     # Usage instructions
     print("To evaluate the ensemble:")
     print(f"  bash {eval_script}")
@@ -316,11 +325,11 @@ def main():
     print("To predict on an image:")
     print(f"  bash {inference_script} path/to/image.jpg")
     print()
-    
+
     print(f"{'='*60}")
     print("Ensemble Ready!")
     print(f"{'='*60}")
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

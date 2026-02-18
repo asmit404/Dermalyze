@@ -37,7 +37,9 @@ def write_yaml(path: Path, content: Dict[str, Any]) -> None:
         yaml.dump(content, file, default_flow_style=False)
 
 
-def create_fold_config(base_config_path: Path, fold_index: int, output_path: Path) -> Path:
+def create_fold_config(
+    base_config_path: Path, fold_index: int, output_path: Path
+) -> Path:
     config = load_yaml(base_config_path)
 
     data_cfg = config.setdefault("data", {})
@@ -110,7 +112,10 @@ def aggregate_numeric_metrics(metrics_by_fold: List[Dict[str, Any]]) -> Dict[str
     ece_values = []
     for entry in metrics_by_fold:
         calibration = entry.get("calibration", {})
-        if isinstance(calibration, dict) and "expected_calibration_error" in calibration:
+        if (
+            isinstance(calibration, dict)
+            and "expected_calibration_error" in calibration
+        ):
             ece_values.append(float(calibration["expected_calibration_error"]))
 
     if ece_values:
@@ -166,7 +171,11 @@ def main() -> None:
     args = parser.parse_args()
 
     project_root = args.project_root.resolve()
-    base_config_path = (project_root / args.config).resolve() if not args.config.is_absolute() else args.config
+    base_config_path = (
+        (project_root / args.config).resolve()
+        if not args.config.is_absolute()
+        else args.config
+    )
     if not base_config_path.exists():
         raise FileNotFoundError(f"Config not found: {base_config_path}")
 
@@ -182,7 +191,9 @@ def main() -> None:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         output_root = project_root / "outputs" / f"kfold_sweep_{timestamp}"
     else:
-        output_root = args.output if args.output.is_absolute() else project_root / args.output
+        output_root = (
+            args.output if args.output.is_absolute() else project_root / args.output
+        )
 
     output_root.mkdir(parents=True, exist_ok=True)
 
@@ -205,7 +216,12 @@ def main() -> None:
     )
 
     plan_path = output_root / "kfold_command_plan.sh"
-    plan_lines = ["#!/bin/bash", "set -euo pipefail", "", "# 5-fold sweep command plan (fold indices 0..4)"]
+    plan_lines = [
+        "#!/bin/bash",
+        "set -euo pipefail",
+        "",
+        "# 5-fold sweep command plan (fold indices 0..4)",
+    ]
     plan_lines.extend(command_plan)
     plan_path.write_text("\n".join(plan_lines) + "\n")
     plan_path.chmod(0o755)
@@ -364,7 +380,12 @@ def main() -> None:
         "folds": fold_results,
     }
 
-    if fold_results_tta and aggregated_tta is not None and best_tta_by_macro_f1 is not None and best_tta_by_accuracy is not None:
+    if (
+        fold_results_tta
+        and aggregated_tta is not None
+        and best_tta_by_macro_f1 is not None
+        and best_tta_by_accuracy is not None
+    ):
         summary["tta"] = {
             "enabled": True,
             "tta_mode": args.tta_mode,
@@ -374,11 +395,15 @@ def main() -> None:
             "best_fold": {
                 "by_macro_f1": {
                     "fold_index": best_tta_by_macro_f1["fold_index"],
-                    "macro_f1": float(best_tta_by_macro_f1["metrics"].get("macro_f1", 0.0)),
+                    "macro_f1": float(
+                        best_tta_by_macro_f1["metrics"].get("macro_f1", 0.0)
+                    ),
                 },
                 "by_accuracy": {
                     "fold_index": best_tta_by_accuracy["fold_index"],
-                    "accuracy": float(best_tta_by_accuracy["metrics"].get("accuracy", 0.0)),
+                    "accuracy": float(
+                        best_tta_by_accuracy["metrics"].get("accuracy", 0.0)
+                    ),
                 },
             },
             "folds": fold_results_tta,

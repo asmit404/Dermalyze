@@ -18,7 +18,11 @@ import numpy as np
 import pandas as pd
 import torch
 from PIL import Image
-from sklearn.model_selection import GroupShuffleSplit, StratifiedGroupKFold, train_test_split
+from sklearn.model_selection import (
+    GroupShuffleSplit,
+    StratifiedGroupKFold,
+    train_test_split,
+)
 from torch.utils.data import DataLoader, Dataset, WeightedRandomSampler
 from torchvision import transforms
 
@@ -45,14 +49,14 @@ IMAGENET_STD = [0.229, 0.224, 0.225]
 class HAM10000Dataset(Dataset):
     """
     PyTorch Dataset for HAM10000 skin lesion images.
-    
+
     Attributes:
         df: DataFrame containing image_id, label, and optional lesion_id
         images_dir: Path to directory containing images
         transform: Optional transforms to apply to images
         target_transform: Optional transforms to apply to labels
     """
-    
+
     def __init__(
         self,
         df: pd.DataFrame,
@@ -62,7 +66,7 @@ class HAM10000Dataset(Dataset):
     ):
         """
         Initialize the dataset.
-        
+
         Args:
             df: DataFrame with columns 'image_id' and 'label' (and optionally 'lesion_id')
             images_dir: Directory containing the image files
@@ -73,10 +77,10 @@ class HAM10000Dataset(Dataset):
         self.images_dir = Path(images_dir)
         self.transform = transform
         self.target_transform = target_transform
-        
+
         # Validate that all images exist
         self._validate_images()
-    
+
     def _validate_images(self) -> None:
         """Validate that all referenced images exist on disk."""
         missing = []
@@ -84,14 +88,14 @@ class HAM10000Dataset(Dataset):
             img_path = self._get_image_path(img_id)
             if not img_path.exists():
                 missing.append(img_id)
-        
+
         if missing and len(missing) <= 10:
             raise FileNotFoundError(f"Missing images: {missing}")
         elif missing:
             raise FileNotFoundError(
                 f"Missing {len(missing)} images. First 10: {missing[:10]}"
             )
-    
+
     def _get_image_path(self, image_id: str) -> Path:
         """Get the full path to an image file."""
         # Try common extensions
@@ -101,44 +105,44 @@ class HAM10000Dataset(Dataset):
                 return path
         # Default to jpg if not found (will fail in validation)
         return self.images_dir / f"{image_id}.jpg"
-    
+
     def __len__(self) -> int:
         return len(self.df)
-    
+
     def __getitem__(self, idx: int) -> Tuple[torch.Tensor, int]:
         """
         Get a sample from the dataset.
-        
+
         Args:
             idx: Index of the sample
-            
+
         Returns:
             Tuple of (image_tensor, label_index)
         """
         row = self.df.iloc[idx]
         image_id = row["image_id"]
         label = row["label"]
-        
+
         # Load image
         img_path = self._get_image_path(image_id)
         image = Image.open(img_path).convert("RGB")
-        
+
         # Convert label to index
         label_idx = LABEL_TO_IDX[label]
-        
+
         # Apply transforms
         if self.transform:
             image = self.transform(image)
-        
+
         if self.target_transform:
             label_idx = self.target_transform(label_idx)
-        
+
         return image, label_idx
-    
+
     def get_class_distribution(self) -> dict:
         """Get the distribution of classes in the dataset."""
         return self.df["label"].value_counts().to_dict()
-    
+
     def get_class_weights(self, power: float = 1.0) -> torch.Tensor:
         """
         Compute class weights inversely proportional to class frequencies.
@@ -152,7 +156,7 @@ class HAM10000Dataset(Dataset):
             base_weight = total / (len(LABEL_TO_IDX) * count)
             weights.append(base_weight ** max(power, 0.0))
         return torch.tensor(weights, dtype=torch.float32)
-    
+
     def get_sample_weights(self, power: float = 1.0) -> torch.Tensor:
         """
         Get per-sample weights for WeightedRandomSampler.
@@ -173,18 +177,18 @@ def get_transforms(
 ) -> transforms.Compose:
     """
     Get image transforms for different dataset splits.
-    
+
     Args:
         split: Dataset split (train, val, or test)
         image_size: Target image size
         augmentation_strength: Strength of augmentation for training
-        
+
     Returns:
         Composed transforms
     """
     # Common preprocessing for all splits
     normalize = transforms.Normalize(mean=IMAGENET_MEAN, std=IMAGENET_STD)
-    
+
     if split == "train":
         # Training transforms with augmentation
         post_transforms = []
@@ -248,22 +252,26 @@ def get_transforms(
                     p=0.2, scale=(0.02, 0.12), ratio=(0.3, 3.3), value="random"
                 )
             ]
-        
-        return transforms.Compose([
-            transforms.Resize((image_size + 32, image_size + 32)),
-            transforms.RandomCrop(image_size),
-            *aug_transforms,
-            transforms.ToTensor(),
-            *post_transforms,
-            normalize,
-        ])
-    
+
+        return transforms.Compose(
+            [
+                transforms.Resize((image_size + 32, image_size + 32)),
+                transforms.RandomCrop(image_size),
+                *aug_transforms,
+                transforms.ToTensor(),
+                *post_transforms,
+                normalize,
+            ]
+        )
+
     else:  # val or test
-        return transforms.Compose([
-            transforms.Resize((image_size, image_size)),
-            transforms.ToTensor(),
-            normalize,
-        ])
+        return transforms.Compose(
+            [
+                transforms.Resize((image_size, image_size)),
+                transforms.ToTensor(),
+                normalize,
+            ]
+        )
 
 
 def load_and_split_data(
@@ -280,7 +288,7 @@ def load_and_split_data(
 ) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """
     Load the HAM10000 metadata and split into train/val/test sets.
-    
+
     Uses lesion-aware splitting to prevent data leakage (images of the same
     lesion stay in the same split). Falls back to stratified splitting if
     lesion_id is not available.
@@ -289,7 +297,7 @@ def load_and_split_data(
     splitting. In this mode, a holdout test split is created first (if
     test_size > 0), then StratifiedGroupKFold is applied to the remaining data.
     val_size is ignored in this mode.
-    
+
     Args:
         labels_csv: Path to CSV with image_id, label, and optionally lesion_id
         images_dir: Path to directory containing images
@@ -302,22 +310,22 @@ def load_and_split_data(
         kfold_n_splits: Number of folds for StratifiedGroupKFold
         kfold_fold_index: Which fold to use as validation (0-indexed)
         kfold_group_column: Column name used as group identifier
-        
+
     Returns:
         Tuple of (train_df, val_df, test_df)
     """
     # Load labels
     df = pd.read_csv(labels_csv)
-    
+
     # Validate required columns
     if "image_id" not in df.columns or "label" not in df.columns:
         raise ValueError("CSV must contain 'image_id' and 'label' columns")
-    
+
     # Validate labels
     invalid_labels = set(df["label"].unique()) - set(CLASS_LABELS.keys())
     if invalid_labels:
         raise ValueError(f"Invalid labels found: {invalid_labels}")
-    
+
     if use_stratified_group_kfold:
         if kfold_n_splits < 2:
             raise ValueError("kfold_n_splits must be >= 2 for StratifiedGroupKFold")
@@ -368,7 +376,7 @@ def load_and_split_data(
 
     # Check for lesion_id column for lesion-aware splitting
     has_lesion_id = "lesion_id" in df.columns and lesion_aware
-    
+
     if has_lesion_id:
         # Lesion-aware splitting using GroupShuffleSplit
         # First split: separate test set
@@ -378,10 +386,10 @@ def load_and_split_data(
         train_val_idx, test_idx = next(
             gss_test.split(df, df["label"], groups=df["lesion_id"])
         )
-        
+
         train_val_df = df.iloc[train_val_idx]
         test_df = df.iloc[test_idx]
-        
+
         # Second split: separate validation from training
         val_fraction = val_size / (1 - test_size)  # Adjust for remaining data
         gss_val = GroupShuffleSplit(
@@ -394,10 +402,10 @@ def load_and_split_data(
                 groups=train_val_df["lesion_id"],
             )
         )
-        
+
         train_df = train_val_df.iloc[train_idx]
         val_df = train_val_df.iloc[val_idx]
-        
+
     else:
         # Stratified splitting without lesion awareness
         train_val_df, test_df = train_test_split(
@@ -406,7 +414,7 @@ def load_and_split_data(
             stratify=df["label"],
             random_state=random_state,
         )
-        
+
         val_fraction = val_size / (1 - test_size)
         train_df, val_df = train_test_split(
             train_val_df,
@@ -414,8 +422,12 @@ def load_and_split_data(
             stratify=train_val_df["label"],
             random_state=random_state,
         )
-    
-    return train_df.reset_index(drop=True), val_df.reset_index(drop=True), test_df.reset_index(drop=True)
+
+    return (
+        train_df.reset_index(drop=True),
+        val_df.reset_index(drop=True),
+        test_df.reset_index(drop=True),
+    )
 
 
 def create_dataloaders(
@@ -435,7 +447,7 @@ def create_dataloaders(
 ) -> Tuple[DataLoader, DataLoader, DataLoader]:
     """
     Create PyTorch DataLoaders for training, validation, and testing.
-    
+
     Args:
         train_df: Training data DataFrame
         val_df: Validation data DataFrame
@@ -450,7 +462,7 @@ def create_dataloaders(
         pin_memory: Whether to pin memory (faster GPU transfer, only useful for CUDA)
         prefetch_factor: Number of batches to prefetch per worker (None to disable)
         persistent_workers: Keep workers alive between epochs (faster but more memory)
-        
+
     Returns:
         Tuple of (train_loader, val_loader, test_loader)
     """
@@ -460,48 +472,46 @@ def create_dataloaders(
         images_dir=images_dir,
         transform=get_transforms("train", image_size, augmentation_strength),
     )
-    
+
     val_dataset = HAM10000Dataset(
         df=val_df,
         images_dir=images_dir,
         transform=get_transforms("val", image_size),
     )
-    
+
     test_dataset = HAM10000Dataset(
         df=test_df,
         images_dir=images_dir,
         transform=get_transforms("test", image_size),
     )
-    
+
     # Create samplers
     train_sampler = None
     train_shuffle = True
-    
+
     if use_weighted_sampling:
-        sample_weights = train_dataset.get_sample_weights(
-            power=weighted_sampling_power
-        )
+        sample_weights = train_dataset.get_sample_weights(power=weighted_sampling_power)
         train_sampler = WeightedRandomSampler(
             weights=sample_weights,
             num_samples=len(train_dataset),
             replacement=True,
         )
         train_shuffle = False  # Sampler handles shuffling
-    
+
     # Create DataLoaders with optimized settings
     # Common kwargs for all loaders
     common_kwargs = {
         "num_workers": num_workers,
         "pin_memory": pin_memory,
     }
-    
+
     # Add prefetch_factor and persistent_workers only if num_workers > 0
     if num_workers > 0:
         if prefetch_factor is not None:
             common_kwargs["prefetch_factor"] = prefetch_factor
         if persistent_workers:
             common_kwargs["persistent_workers"] = persistent_workers
-    
+
     train_loader = DataLoader(
         train_dataset,
         batch_size=batch_size,
@@ -510,21 +520,21 @@ def create_dataloaders(
         drop_last=True,  # Drop incomplete batches for training stability
         **common_kwargs,
     )
-    
+
     val_loader = DataLoader(
         val_dataset,
         batch_size=batch_size,
         shuffle=False,
         **common_kwargs,
     )
-    
+
     test_loader = DataLoader(
         test_dataset,
         batch_size=batch_size,
         shuffle=False,
         **common_kwargs,
     )
-    
+
     return train_loader, val_loader, test_loader
 
 
@@ -534,27 +544,27 @@ def get_class_weights_for_loss(
 ) -> torch.Tensor:
     """
     Compute class weights for use in weighted loss functions.
-    
+
     Args:
         train_df: Training DataFrame with 'label' column
-        
+
     Returns:
         Tensor of class weights
     """
     class_counts = train_df["label"].value_counts()
     total = len(train_df)
     weights = []
-    
+
     for label in sorted(LABEL_TO_IDX.keys()):
         count = class_counts.get(label, 1)
         # Inverse frequency weighting with optional power scaling
         base_weight = total / (len(LABEL_TO_IDX) * count)
         weights.append(base_weight ** max(power, 0.0))
-    
+
     # Normalize weights
     weights = torch.tensor(weights, dtype=torch.float32)
     weights = weights / weights.sum() * len(weights)
-    
+
     return weights
 
 
@@ -570,11 +580,11 @@ def preprocess_image(
 ) -> torch.Tensor:
     """
     Preprocess a single image for inference.
-    
+
     Args:
         image: PIL Image, numpy array, or path to image file
         image_size: Target image size
-        
+
     Returns:
         Preprocessed image tensor with batch dimension (1, C, H, W)
     """
@@ -583,10 +593,10 @@ def preprocess_image(
         image = Image.open(image).convert("RGB")
     elif isinstance(image, np.ndarray):
         image = Image.fromarray(image).convert("RGB")
-    
+
     # Apply transforms
     transform = get_inference_transform(image_size)
     tensor = transform(image)
-    
+
     # Add batch dimension
     return tensor.unsqueeze(0)
