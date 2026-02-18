@@ -2,6 +2,7 @@
 data/HAM10000
 
 # Outputs and checkpoints
+evaluation_results/
 outputs/
 *.pt
 *.pth
