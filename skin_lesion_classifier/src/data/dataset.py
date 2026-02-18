@@ -139,7 +139,7 @@ class HAM10000Dataset(Dataset):
         """Get the distribution of classes in the dataset."""
         return self.df["label"].value_counts().to_dict()
     
-    def get_class_weights(self) -> torch.Tensor:
+    def get_class_weights(self, power: float = 1.0) -> torch.Tensor:
         """
         Compute class weights inversely proportional to class frequencies.
         Useful for weighted loss functions to handle class imbalance.
@@ -149,15 +149,16 @@ class HAM10000Dataset(Dataset):
         weights = []
         for label in sorted(LABEL_TO_IDX.keys()):
             count = class_counts.get(label, 1)
-            weights.append(total / (len(LABEL_TO_IDX) * count))
+            base_weight = total / (len(LABEL_TO_IDX) * count)
+            weights.append(base_weight ** max(power, 0.0))
         return torch.tensor(weights, dtype=torch.float32)
     
-    def get_sample_weights(self) -> torch.Tensor:
+    def get_sample_weights(self, power: float = 1.0) -> torch.Tensor:
         """
         Get per-sample weights for WeightedRandomSampler.
         Each sample gets the weight of its class.
         """
-        class_weights = self.get_class_weights()
+        class_weights = self.get_class_weights(power=power)
         sample_weights = []
         for label in self.df["label"]:
             idx = LABEL_TO_IDX[label]
@@ -365,6 +366,7 @@ def create_dataloaders(
     image_size: int = 224,
     augmentation_strength: Literal["light", "medium", "heavy", "domain"] = "medium",
     use_weighted_sampling: bool = True,
+    weighted_sampling_power: float = 1.0,
     pin_memory: bool = True,
     prefetch_factor: Optional[int] = 2,
     persistent_workers: bool = False,
@@ -382,6 +384,7 @@ def create_dataloaders(
         image_size: Target image size
         augmentation_strength: Strength of training augmentation
         use_weighted_sampling: Whether to use weighted sampling for class balance
+        weighted_sampling_power: Power for inverse-frequency sampler weights (0=no weighting, 1=full)
         pin_memory: Whether to pin memory (faster GPU transfer, only useful for CUDA)
         prefetch_factor: Number of batches to prefetch per worker (None to disable)
         persistent_workers: Keep workers alive between epochs (faster but more memory)
@@ -413,7 +416,9 @@ def create_dataloaders(
     train_shuffle = True
     
     if use_weighted_sampling:
-        sample_weights = train_dataset.get_sample_weights()
+        sample_weights = train_dataset.get_sample_weights(
+            power=weighted_sampling_power
+        )
         train_sampler = WeightedRandomSampler(
             weights=sample_weights,
             num_samples=len(train_dataset),
@@ -461,7 +466,10 @@ def create_dataloaders(
     return train_loader, val_loader, test_loader
 
 
-def get_class_weights_for_loss(train_df: pd.DataFrame) -> torch.Tensor:
+def get_class_weights_for_loss(
+    train_df: pd.DataFrame,
+    power: float = 1.0,
+) -> torch.Tensor:
     """
     Compute class weights for use in weighted loss functions.
     
@@ -477,8 +485,9 @@ def get_class_weights_for_loss(train_df: pd.DataFrame) -> torch.Tensor:
     
     for label in sorted(LABEL_TO_IDX.keys()):
         count = class_counts.get(label, 1)
-        # Inverse frequency weighting
-        weights.append(total / (len(LABEL_TO_IDX) * count))
+        # Inverse frequency weighting with optional power scaling
+        base_weight = total / (len(LABEL_TO_IDX) * count)
+        weights.append(base_weight ** max(power, 0.0))
     
     # Normalize weights
     weights = torch.tensor(weights, dtype=torch.float32)

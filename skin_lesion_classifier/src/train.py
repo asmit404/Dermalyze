@@ -602,6 +602,9 @@ def train(
     cutmix_alpha = float(train_config.get("cutmix_alpha", 0.0) or 0.0)
     mixup_prob = float(train_config.get("mixup_prob", 0.0) or 0.0)
     cutmix_prob = float(train_config.get("cutmix_prob", 0.5) or 0.5)
+    weighted_sampling_power = float(
+        train_config.get("sampling_weight_power", 1.0) or 1.0
+    )
     gradient_accumulation_steps = int(train_config.get("gradient_accumulation_steps", 1) or 1)
     if use_amp:
         logger.info("Using Automatic Mixed Precision (AMP)")
@@ -611,15 +614,30 @@ def train(
     # Optional two-stage fine-tuning (head warmup -> full fine-tune)
     stage1_epochs = int(train_config.get("stage1_epochs", 0) or 0)
     stage2_epochs_cfg = train_config.get("stage2_epochs", None)
+    stage_epoch_mode = str(train_config.get("stage_epoch_mode", "fit_total")).lower()
     if stage1_epochs > 0:
-        if stage2_epochs_cfg is None:
-            stage2_epochs = max(0, epochs - stage1_epochs)
+        if stage_epoch_mode == "explicit":
+            if stage2_epochs_cfg is None:
+                stage2_epochs = max(0, epochs - stage1_epochs)
+            else:
+                stage2_epochs = int(stage2_epochs_cfg)
+            total_epochs = stage1_epochs + stage2_epochs
         else:
-            stage2_epochs = int(stage2_epochs_cfg)
-        total_epochs = stage1_epochs + stage2_epochs
+            stage2_epochs = max(0, epochs - stage1_epochs)
+            total_epochs = epochs
     else:
         stage2_epochs = epochs
         total_epochs = epochs
+
+    if stage_epoch_mode != "explicit" and stage2_epochs_cfg is not None:
+        configured_total = stage1_epochs + int(stage2_epochs_cfg)
+        if configured_total != epochs:
+            logger.warning(
+                "Ignoring stage2_epochs=%s to respect epochs=%s (stage_epoch_mode=fit_total). "
+                "Set training.stage_epoch_mode=explicit to use stage1+stage2 exactly.",
+                stage2_epochs_cfg,
+                epochs,
+            )
 
     stage1_lr = train_config.get("stage1_lr", lr)
     stage2_lr = train_config.get("stage2_lr", lr)
@@ -645,15 +663,25 @@ def train(
         image_size=config.get("model", {}).get("image_size", 224),
         augmentation_strength=train_config.get("augmentation", "medium"),
         use_weighted_sampling=train_config.get("use_weighted_sampling", True),
+        weighted_sampling_power=weighted_sampling_power,
         pin_memory=(device.type == "cuda"),  # Pin memory only works on CUDA
         prefetch_factor=train_config.get("prefetch_factor", 2),
         persistent_workers=train_config.get("persistent_workers", True),
     )
 
+    # Loss configuration and class weights
+    loss_config = config.get("loss", {})
+
     # Calculate class weights for loss function
-    class_weights = get_class_weights_for_loss(train_df)
+    class_weight_power = float(loss_config.get("class_weight_power", 1.0) or 1.0)
+    class_weights = get_class_weights_for_loss(train_df, power=class_weight_power)
     class_weights = class_weights.to(device)
     logger.info(f"Class weights: {class_weights.tolist()}")
+    logger.info(
+        "Balance controls | sampling_weight_power=%.3f, class_weight_power=%.3f",
+        weighted_sampling_power,
+        class_weight_power,
+    )
 
     # Create model
     model_config = config.get("model", {})
@@ -680,7 +708,6 @@ def train(
     logger.info(f"Trainable parameters: {model.get_trainable_params():,}")
 
     # Create loss function
-    loss_config = config.get("loss", {})
 
     # Handle alpha parameter - use manual values if provided, otherwise use computed class weights
     focal_alpha = None
