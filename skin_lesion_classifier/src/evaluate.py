@@ -897,7 +897,7 @@ def evaluate(
         metrics["ensemble_config"] = {
             "num_models": len(models),
             "aggregation": ensemble_aggregation,
-            "weights": ensemble_weights,
+            "weights": ensemble_weights.tolist() if isinstance(ensemble_weights, np.ndarray) else ensemble_weights,
         }
     
     metrics_path = output_dir / "evaluation_metrics.json"
