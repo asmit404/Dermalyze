@@ -1,29 +1,26 @@
 # =============================================================================
 # Skin Lesion Classification Configuration
 # =============================================================================
-# EfficientNet-V2 based classifier for HAM10000 dataset
 
 # -----------------------------------------------------------------------------
 # Data Configuration
 # -----------------------------------------------------------------------------
 data:
-  root: data/HAM10000
   images_dir: data/HAM10000/images
   labels_csv: data/HAM10000/labels.csv
-  split_seed: 42            # Random seed for data splitting (can differ from training seed)
+  split_seed: 42 
   val_size: 0.15
   test_size: 0.15
-  lesion_aware: true        # Prevent lesion-level data leakage
+  lesion_aware: true
 
 # -----------------------------------------------------------------------------
 # Model Configuration
 # -----------------------------------------------------------------------------
 model:
-  name: efficientnet_v2      # EfficientNet-V2 Small (hardcoded)
   num_classes: 7
-  image_size: 224            # Higher res captures fine dermoscopic detail
+  image_size: 224
   pretrained: true
-  dropout_rate: 0.3          # Dropout for regularization
+  dropout_rate: 0.3
   freeze_backbone: false
 
 # -----------------------------------------------------------------------------
@@ -31,112 +28,68 @@ model:
 # -----------------------------------------------------------------------------
 training:
   seed: 42
-  batch_size: 32              # ↓ Smaller batch = better generalization + fits 300px images
-  epochs: 30                  # ↑ More epochs to converge properly
+  batch_size: 16
+  epochs: 40
   lr: 0.0003
   weight_decay: 0.02
   
   # Two-Stage Training
-  stage1_epochs: 8            # ↑ More warm-up epochs for backbone adaptation
-  stage1_lr: 0.0001           # ↓ CRITICAL FIX: 0.001 was destroying pretrained features
+  stage1_epochs: 8
+  stage1_lr: 0.0001
   stage1_weight_decay: 0.01
-  stage2_epochs: 52           # ↑ More fine-tuning time
-  stage2_lr: 0.0003           # ↑ Higher LR is fine when only training the head
-  stage2_weight_decay: 0.03   # ↑ Stronger regularization for head-only training
+  stage2_epochs: 32
+  stage_epoch_mode: fit_total
+  stage2_lr: 0.0003
+  stage2_weight_decay: 0.03
   
+  # Data Loading
   num_workers: 4
-  use_amp: false              # MPS doesn't support AMP efficiently
-  use_torch_compile: false    # Disabled for MPS (backward pass issues)
+  prefetch_factor: 2
+  persistent_workers: true
   use_weighted_sampling: true
-  fast_mode: true             # Disable deterministic operations for speed
-  augmentation: heavy         # ↑ Stronger augmentation for medical imaging (was medium)
-  early_stopping_patience: 12 # ↑ More patience to avoid premature stopping (was 6)
-  prefetch_factor: 2          # Prefetch batches for better pipeline
-  persistent_workers: true    # Keep workers alive between epochs
-
-  # Learning Rate Scheduler (OneCycleLR per-stage)
+  sampling_weight_power: 0.6
+  augmentation: heavy
+  
+  # Performance Optimizations
+  use_amp: false
+  use_gradient_checkpointing: true
+  gradient_accumulation_steps: 2
+  
+  # Data Augmentation
+  mixup_alpha: 0.2
+  cutmix_alpha: 0.2
+  mixup_prob: 0.5
+  cutmix_prob: 0.5
+  
+  # Learning Rate Scheduler
   scheduler:
-    type: onecycle           # OneCycleLR — smooth ramp-up then cosine decay per stage
-    warmup_pct: 0.1          # Fraction of steps for LR warm-up
-
-  # Mixup Data Augmentation
-  mixup:
-    enabled: true
-    alpha: 0.2               # ↓ CRITICAL FIX: 1.0 was way too aggressive (uniform mixing)
-
-  # CutMix Data Augmentation
-  cutmix:
-    enabled: true
-    alpha: 0.2               # ↓ CRITICAL FIX: 1.0 was way too aggressive
-
-  mixup_prob: 0.5            # Probability of mixup vs cutmix (when both enabled)
-
-  # Exponential Moving Average (EMA)
+    type: onecycle
+    warmup_pct: 0.1
+    # Cosine scheduler options (if type: cosine):
+    # T_0: 10
+    # T_mult: 2
+    # eta_min: 1e-6
+  
+  # Exponential Moving Average
   ema:
     enabled: true
-    decay: 0.99              # ↓ CRITICAL FIX: 0.9999 barely updates for short training
+    decay: 0.99
     use_for_eval: true
     save_best: true
+  
+  # Early Stopping
+  early_stopping_patience: 5
 
 # -----------------------------------------------------------------------------
 # Loss Function
 # -----------------------------------------------------------------------------
 loss:
-  type: focal                # Focal loss handles HAM10000 class imbalance
-  gamma: 2.0                 # Focusing parameter (down-weight easy examples)
-
-# -----------------------------------------------------------------------------
-# Data Augmentation (Dermatoscopy-Safe)
-# -----------------------------------------------------------------------------
-augmentation:
-  enabled: true
-  intensity: heavy               # ↑ Stronger for medical imaging (was medium)
-  techniques:
-    - random_horizontal_flip: 0.5
-    - random_vertical_flip: 0.5  # ↑ Dermoscopic images have no canonical orientation
-    - random_rotation: 45        # ↑ Full rotation range (was 25)
-    - color_jitter:
-        brightness: 0.3          # ↑ More color variation (was 0.2)
-        contrast: 0.3
-        saturation: 0.3
-        hue: 0.1
-    - gaussian_blur: 0.15        # ↑ Slightly more blur (was 0.1)
-    - random_affine:
-        degrees: 15
-        translate: 0.15          # ↑ More translation (was 0.1)
-        scale: [0.85, 1.15]      # ↑ Wider scale range
-    - cutout: 0.15               # ↑ More erasing (was 0.1)
-
-# -----------------------------------------------------------------------------
-# Evaluation Configuration
-# -----------------------------------------------------------------------------
-evaluation:
-  batch_size: 64                  # ↓ Fits 300px images in memory (was 96)
-  metrics:
-    - accuracy
-    - precision
-    - recall
-    - f1_score
-    - roc_auc
-    - confusion_matrix
-  
-  # Test-Time Augmentation (TTA)
-  tta:
-    enabled: true
-    mode: medium
-    aggregation: mean
-  
-  # Ensemble Prediction
-  ensemble:
-    enabled: true
-    checkpoints: []
-    weights: null
-    aggregation: weighted_mean
+  type: focal
+  gamma: 2.0
+  class_weight_power: 0.6
 
 # -----------------------------------------------------------------------------
 # Output Configuration
 # -----------------------------------------------------------------------------
 output:
-  save_best_only: true
-  log_interval: 10
-  save_training_history: true
+  save_epoch_checkpoints: false
