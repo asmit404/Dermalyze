@@ -505,6 +505,31 @@ def save_checkpoint(
     checkpoint_path = output_dir / "checkpoint_latest.pt"
     torch.save(checkpoint, checkpoint_path)
 
+    def _export_torchscript(best_model_state_dict: Dict[str, torch.Tensor]) -> None:
+        """Export TorchScript model for inference portability."""
+        try:
+            model_config = config.get("model", {})
+            export_model = create_model(
+                num_classes=int(model_config.get("num_classes", 7)),
+                pretrained=False,
+                dropout_rate=float(model_config.get("dropout_rate", 0.3)),
+                freeze_backbone=False,
+                use_gradient_checkpointing=False,
+            )
+            cpu_state_dict = {
+                name: tensor.detach().cpu()
+                for name, tensor in best_model_state_dict.items()
+            }
+            export_model.load_state_dict(cpu_state_dict)
+            export_model.eval()
+
+            scripted_model = torch.jit.script(export_model)
+            torchscript_path = output_dir / "checkpoint_best_torchscript.pt"
+            scripted_model.save(str(torchscript_path))
+            logger.info(f"Saved TorchScript model to: {torchscript_path}")
+        except Exception as exc:
+            logger.warning(f"TorchScript export skipped: {exc}")
+
     # Save best checkpoint
     if is_best:
         best_path = output_dir / "checkpoint_best.pt"
@@ -516,8 +541,10 @@ def save_checkpoint(
             best_checkpoint = dict(checkpoint)
             best_checkpoint["model_state_dict"] = ema_state
             torch.save(best_checkpoint, best_path)
+            _export_torchscript(best_checkpoint["model_state_dict"])
         else:
             torch.save(checkpoint, best_path)
+            _export_torchscript(checkpoint["model_state_dict"])
         logger.info(f"Saved best model with val_loss: {metrics['val_loss']:.4f}")
 
     # Save epoch checkpoint (optional, controlled by config)
