@@ -13,15 +13,19 @@ This script:
 from __future__ import annotations
 
 import argparse
+import concurrent.futures
 import json
+import os
+import shlex
 import subprocess
 import sys
 from datetime import datetime
 from pathlib import Path
 from statistics import mean, pstdev
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Tuple
 
 import yaml
+from tqdm import tqdm
 
 
 VALID_TTA_MODES = ("light", "medium", "full")
@@ -59,9 +63,128 @@ def create_fold_config(
     return output_path
 
 
-def run_command(command: List[str], cwd: Path) -> None:
-    print("$", " ".join(command))
-    subprocess.run(command, cwd=cwd, check=True, capture_output=False)
+def run_command(command: List[str], cwd: Path, log_path: Path | None = None) -> None:
+    if log_path is None:
+        print("$", shlex.join(command))
+    if log_path is None:
+        subprocess.run(command, cwd=cwd, check=True, capture_output=False)
+        return
+
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(log_path, "a") as log_file:
+        log_file.write(f"\n$ {shlex.join(command)}\n")
+        log_file.flush()
+        subprocess.run(
+            command,
+            cwd=cwd,
+            check=True,
+            stdout=log_file,
+            stderr=subprocess.STDOUT,
+            text=True,
+        )
+
+
+def run_fold(
+    fold_index: int,
+    n_splits: int,
+    output_root: Path,
+    fold_config_path: Path,
+    project_root: Path,
+    images_dir: Path,
+    run_tta: bool,
+    tta_mode: str,
+    tta_aggregation: str,
+) -> Tuple[Dict[str, Any], Dict[str, Any] | None]:
+    fold_dir = output_root / f"fold_{fold_index}"
+    fold_dir.mkdir(parents=True, exist_ok=True)
+
+    fold_log_path = fold_dir / "fold_run.log"
+
+    train_command = [
+        sys.executable,
+        "src/train.py",
+        "--config",
+        str(fold_config_path),
+        "--output",
+        str(fold_dir),
+    ]
+    run_command(train_command, cwd=project_root, log_path=fold_log_path)
+
+    checkpoint_path = fold_dir / "checkpoint_best.pt"
+    test_csv_path = fold_dir / "test_split.csv"
+    if not checkpoint_path.exists():
+        raise FileNotFoundError(f"Missing checkpoint: {checkpoint_path}")
+    if not test_csv_path.exists():
+        raise FileNotFoundError(f"Missing test split: {test_csv_path}")
+
+    eval_output_dir = fold_dir / "evaluation_results"
+    eval_command = [
+        sys.executable,
+        "src/evaluate.py",
+        "--checkpoint",
+        str(checkpoint_path),
+        "--test-csv",
+        str(test_csv_path),
+        "--images-dir",
+        str(images_dir),
+        "--output",
+        str(eval_output_dir),
+    ]
+    run_command(eval_command, cwd=project_root, log_path=fold_log_path)
+
+    metrics_path = eval_output_dir / "evaluation_metrics.json"
+    if not metrics_path.exists():
+        raise FileNotFoundError(f"Missing fold metrics: {metrics_path}")
+
+    with open(metrics_path, "r") as file:
+        metrics = json.load(file)
+
+    fold_result = {
+        "fold_index": fold_index,
+        "fold_config": str(fold_config_path),
+        "output_dir": str(fold_dir),
+        "metrics_path": str(metrics_path),
+        "metrics": metrics,
+    }
+
+    fold_tta_result: Dict[str, Any] | None = None
+    if run_tta:
+        eval_tta_output_dir = fold_dir / "evaluation_results_tta"
+        eval_tta_command = [
+            sys.executable,
+            "src/evaluate.py",
+            "--checkpoint",
+            str(checkpoint_path),
+            "--test-csv",
+            str(test_csv_path),
+            "--images-dir",
+            str(images_dir),
+            "--output",
+            str(eval_tta_output_dir),
+            "--use-tta",
+            "--tta-mode",
+            tta_mode,
+            "--tta-aggregation",
+            tta_aggregation,
+        ]
+        run_command(eval_tta_command, cwd=project_root, log_path=fold_log_path)
+
+        metrics_tta_path = eval_tta_output_dir / "evaluation_metrics.json"
+        if not metrics_tta_path.exists():
+            raise FileNotFoundError(f"Missing fold TTA metrics: {metrics_tta_path}")
+
+        with open(metrics_tta_path, "r") as file:
+            metrics_tta = json.load(file)
+
+        fold_tta_result = {
+            "fold_index": fold_index,
+            "fold_config": str(fold_config_path),
+            "output_dir": str(fold_dir),
+            "metrics_path": str(metrics_tta_path),
+            "metrics": metrics_tta,
+        }
+
+    return fold_result, fold_tta_result
 
 
 def build_command_plan(
@@ -174,6 +297,15 @@ def main() -> None:
         default=None,
         help="TTA aggregation method for evaluate.py",
     )
+    parser.add_argument(
+        "--max-parallel-folds",
+        type=int,
+        default=None,
+        help=(
+            "Maximum folds to run concurrently. "
+            "Default: min(n_splits, CPU core count)."
+        ),
+    )
     args = parser.parse_args()
 
     project_root = args.project_root.resolve()
@@ -228,6 +360,16 @@ def main() -> None:
     if n_splits < 2:
         raise ValueError("n_splits must be >= 2")
 
+    if args.max_parallel_folds is None:
+        max_parallel_folds = min(n_splits, max(1, os.cpu_count() or 1))
+    else:
+        max_parallel_folds = int(args.max_parallel_folds)
+
+    if max_parallel_folds < 1:
+        raise ValueError("max_parallel_folds must be >= 1")
+
+    max_parallel_folds = min(max_parallel_folds, n_splits)
+
     images_dir_value = data_cfg.get("images_dir", "data/HAM10000/images")
     images_dir = (project_root / images_dir_value).resolve()
 
@@ -278,105 +420,62 @@ def main() -> None:
     print(f"Base config: {base_config_path}")
     print(f"Output root: {output_root}")
     print(f"Command plan: {plan_path}")
+    print(f"Max parallel folds: {max_parallel_folds}")
     print()
 
     fold_results: List[Dict[str, Any]] = []
     fold_results_tta: List[Dict[str, Any]] = []
 
-    for fold_index in range(n_splits):
-        fold_dir = output_root / f"fold_{fold_index}"
-        fold_dir.mkdir(parents=True, exist_ok=True)
-
-        print("-" * 70)
-        print(f"Fold {fold_index}/{n_splits - 1}")
-        print("-" * 70)
-
-        train_command = [
-            sys.executable,
-            "src/train.py",
-            "--config",
-            str(fold_config_paths[fold_index]),
-            "--output",
-            str(fold_dir),
-        ]
-        run_command(train_command, cwd=project_root)
-
-        checkpoint_path = fold_dir / "checkpoint_best.pt"
-        test_csv_path = fold_dir / "test_split.csv"
-        if not checkpoint_path.exists():
-            raise FileNotFoundError(f"Missing checkpoint: {checkpoint_path}")
-        if not test_csv_path.exists():
-            raise FileNotFoundError(f"Missing test split: {test_csv_path}")
-
-        eval_output_dir = fold_dir / "evaluation_results"
-        eval_command = [
-            sys.executable,
-            "src/evaluate.py",
-            "--checkpoint",
-            str(checkpoint_path),
-            "--test-csv",
-            str(test_csv_path),
-            "--images-dir",
-            str(images_dir),
-            "--output",
-            str(eval_output_dir),
-        ]
-        run_command(eval_command, cwd=project_root)
-
-        metrics_path = eval_output_dir / "evaluation_metrics.json"
-        if not metrics_path.exists():
-            raise FileNotFoundError(f"Missing fold metrics: {metrics_path}")
-
-        with open(metrics_path, "r") as file:
-            metrics = json.load(file)
-
-        fold_results.append(
-            {
-                "fold_index": fold_index,
-                "fold_config": str(fold_config_paths[fold_index]),
-                "output_dir": str(fold_dir),
-                "metrics_path": str(metrics_path),
-                "metrics": metrics,
-            }
-        )
-
-        if run_tta:
-            eval_tta_output_dir = fold_dir / "evaluation_results_tta"
-            eval_tta_command = [
-                sys.executable,
-                "src/evaluate.py",
-                "--checkpoint",
-                str(checkpoint_path),
-                "--test-csv",
-                str(test_csv_path),
-                "--images-dir",
-                str(images_dir),
-                "--output",
-                str(eval_tta_output_dir),
-                "--use-tta",
-                "--tta-mode",
+    future_by_fold: Dict[
+        concurrent.futures.Future[Tuple[Dict[str, Any], Dict[str, Any] | None]], int
+    ] = {}
+    with concurrent.futures.ThreadPoolExecutor(
+        max_workers=max_parallel_folds
+    ) as executor:
+        for fold_index in range(n_splits):
+            future = executor.submit(
+                run_fold,
+                fold_index,
+                n_splits,
+                output_root,
+                fold_config_paths[fold_index],
+                project_root,
+                images_dir,
+                run_tta,
                 tta_mode,
-                "--tta-aggregation",
                 tta_aggregation,
-            ]
-            run_command(eval_tta_command, cwd=project_root)
-
-            metrics_tta_path = eval_tta_output_dir / "evaluation_metrics.json"
-            if not metrics_tta_path.exists():
-                raise FileNotFoundError(f"Missing fold TTA metrics: {metrics_tta_path}")
-
-            with open(metrics_tta_path, "r") as file:
-                metrics_tta = json.load(file)
-
-            fold_results_tta.append(
-                {
-                    "fold_index": fold_index,
-                    "fold_config": str(fold_config_paths[fold_index]),
-                    "output_dir": str(fold_dir),
-                    "metrics_path": str(metrics_tta_path),
-                    "metrics": metrics_tta,
-                }
             )
+            future_by_fold[future] = fold_index
+
+        failed_folds: List[Tuple[int, str]] = []
+        with tqdm(total=n_splits, desc="Folds", unit="fold") as progress_bar:
+            for future in concurrent.futures.as_completed(future_by_fold):
+                fold_index = future_by_fold[future]
+                try:
+                    fold_result, fold_tta_result = future.result()
+                except Exception as exc:  # pragma: no cover
+                    failed_folds.append((fold_index, str(exc)))
+                    progress_bar.write(f"Fold {fold_index} failed: {exc}")
+                    progress_bar.update(1)
+                    continue
+
+                fold_results.append(fold_result)
+                if fold_tta_result is not None:
+                    fold_results_tta.append(fold_tta_result)
+
+                progress_bar.write(
+                    f"Fold {fold_index} completed (log: {output_root / f'fold_{fold_index}' / 'fold_run.log'})"
+                )
+                progress_bar.update(1)
+
+        if failed_folds:
+            failed_text = ", ".join(
+                [f"fold_{idx}: {err}" for idx, err in sorted(failed_folds)]
+            )
+            raise RuntimeError(f"One or more folds failed: {failed_text}")
+
+    fold_results.sort(key=lambda entry: int(entry["fold_index"]))
+    fold_results_tta.sort(key=lambda entry: int(entry["fold_index"]))
 
     metrics_only = [entry["metrics"] for entry in fold_results]
     aggregated = aggregate_numeric_metrics(metrics_only)
