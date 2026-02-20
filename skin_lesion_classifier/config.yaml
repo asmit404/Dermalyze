@@ -23,7 +23,7 @@ data:
 # -----------------------------------------------------------------------------
 model:
   num_classes: 7
-  image_size: 224
+  image_size: 384
   pretrained: true
   dropout_rate: 0.3
   freeze_backbone: false
@@ -33,7 +33,7 @@ model:
 # -----------------------------------------------------------------------------
 training:
   seed: 42
-  batch_size: 16
+  batch_size: 4
   epochs: 40
   lr: 0.00025
   weight_decay: 0.02
@@ -43,8 +43,8 @@ training:
   stage1_lr: 0.001
   stage1_weight_decay: 0.01
   stage2_epochs: 35
-  stage_epoch_mode: fit_total
-  stage2_lr: 0.00025
+  stage_epoch_mode: explicit
+  stage2_lr: 0.000125
   stage2_weight_decay: 0.02
 
   # Data Loading
@@ -52,19 +52,19 @@ training:
   prefetch_factor: 2
   persistent_workers: true
   use_weighted_sampling: true
-  sampling_weight_power: 0.35
-  augmentation: medium
+  sampling_weight_power: 0.55
+  augmentation: heavy
 
   # Performance Optimizations
-  use_amp: false
+  use_amp: true
   use_gradient_checkpointing: true
-  gradient_accumulation_steps: 2
+  gradient_accumulation_steps: 4
 
   # Data Augmentation
-  mixup_alpha: 0.1
-  cutmix_alpha: 0.1
-  mixup_prob: 0.05
-  cutmix_prob: 0.0
+  mixup_alpha: 0.2
+  cutmix_alpha: 0.2
+  mixup_prob: 0.3
+  cutmix_prob: 0.3
 
   # Learning Rate Scheduler
   scheduler:
@@ -89,10 +89,10 @@ training:
 # Loss Function
 # -----------------------------------------------------------------------------
 loss:
-  type: label_smoothing
+  type: focal
   alpha: null
   label_smoothing: 0.03
-  class_weight_power: 0.35
+  class_weight_power: 1.2
 
 # -----------------------------------------------------------------------------
 # Output Configuration
@@ -106,8 +106,8 @@ output:
 evaluation:
   tta:
     use_tta: true
-    mode: medium
-    aggregation: mean
+    mode: full
+    aggregation: geometric_mean
     use_clahe_tta: true
     clahe_clip_limit: 2.0
     clahe_grid_size: 8

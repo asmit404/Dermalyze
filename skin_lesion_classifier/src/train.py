@@ -652,7 +652,8 @@ def train(
     epochs = train_config.get("epochs", 30)
     lr = train_config.get("lr", 1e-4)
     weight_decay = train_config.get("weight_decay", 0.01)
-    use_amp = train_config.get("use_amp", True) and device.type == "cuda"
+    amp_requested = bool(train_config.get("use_amp", True))
+    use_amp = amp_requested and device.type == "cuda"
     mixup_alpha = float(train_config.get("mixup_alpha", 0.0) or 0.0)
     cutmix_alpha = float(train_config.get("cutmix_alpha", 0.0) or 0.0)
     mixup_prob = float(train_config.get("mixup_prob", 0.0) or 0.0)
@@ -664,7 +665,14 @@ def train(
         train_config.get("gradient_accumulation_steps", 1) or 1
     )
     if use_amp:
-        logger.info("Using Automatic Mixed Precision (AMP)")
+        logger.info("AMP: enabled (CUDA mixed precision)")
+    elif amp_requested and device.type != "cuda":
+        logger.info(
+            "AMP: disabled (requested in config, but only CUDA supports AMP here; device=%s)",
+            device.type,
+        )
+    else:
+        logger.info("AMP: disabled (training.use_amp=false)")
     if gradient_accumulation_steps > 1:
         logger.info(f"Using gradient accumulation: {gradient_accumulation_steps} steps")
 
