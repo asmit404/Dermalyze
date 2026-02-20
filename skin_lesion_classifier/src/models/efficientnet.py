@@ -123,6 +123,11 @@ class SkinLesionClassifier(nn.Module):
         for param in self.backbone.parameters():
             param.requires_grad = True
 
+    @torch.jit.unused
+    def _forward_with_checkpoint(self, x: torch.Tensor) -> torch.Tensor:
+        """Forward backbone with gradient checkpointing (Python-only path)."""
+        return checkpoint(self.backbone, x, use_reentrant=False)
+
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
         Forward pass through the network.
@@ -134,9 +139,11 @@ class SkinLesionClassifier(nn.Module):
             Logits tensor of shape (batch_size, num_classes)
         """
         # Extract features from backbone
-        if self.use_gradient_checkpointing and self.training:
+        if torch.jit.is_scripting() or torch.jit.is_tracing():
+            features = self.backbone(x)
+        elif self.use_gradient_checkpointing and self.training:
             # Use gradient checkpointing for memory efficiency
-            features = checkpoint(self.backbone, x, use_reentrant=False)
+            features = self._forward_with_checkpoint(x)
         else:
             features = self.backbone(x)
 
