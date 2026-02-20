@@ -12,7 +12,7 @@ data:
   val_size: 0.15
   test_size: 0.15
   lesion_aware: true
-  use_stratified_group_kfold: true
+  use_stratified_group_kfold: false
   kfold:
     n_splits: 5
     fold_index: 0
@@ -53,7 +53,7 @@ training:
   persistent_workers: true
   use_weighted_sampling: true
   sampling_weight_power: 0.35
-  augmentation: randaugment
+  augmentation: medium
 
   # Performance Optimizations
   use_amp: false
@@ -63,8 +63,8 @@ training:
   # Data Augmentation
   mixup_alpha: 0.1
   cutmix_alpha: 0.1
-  mixup_prob: 0.25
-  cutmix_prob: 0.15
+  mixup_prob: 0.05
+  cutmix_prob: 0.0
 
   # Learning Rate Scheduler
   scheduler:
@@ -90,12 +90,24 @@ training:
 # -----------------------------------------------------------------------------
 loss:
   type: label_smoothing
-  alpha: [1, 1, 1, 1, 1, 1, 1]
+  alpha: null
   label_smoothing: 0.03
-  class_weight_power: 0.0
+  class_weight_power: 0.35
 
 # -----------------------------------------------------------------------------
 # Output Configuration
 # -----------------------------------------------------------------------------
 output:
   save_epoch_checkpoints: false
+
+# -----------------------------------------------------------------------------
+# Evaluation Configuration
+# -----------------------------------------------------------------------------
+evaluation:
+  tta:
+    use_tta: true
+    mode: medium
+    aggregation: mean
+    use_clahe_tta: true
+    clahe_clip_limit: 2.0
+    clahe_grid_size: 8

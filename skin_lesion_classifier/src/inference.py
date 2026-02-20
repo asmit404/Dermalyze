@@ -26,6 +26,51 @@ from src.data.dataset import (
     preprocess_image,
 )
 from src.models.efficientnet import SkinLesionClassifier
+from src.tta_constants import TTA_AUG_COUNTS
+
+try:
+    import cv2
+except ImportError:
+    cv2 = None
+
+
+def apply_clahe_to_pil(
+    image: Image.Image,
+    clip_limit: float = 2.0,
+    tile_grid_size: int = 8,
+) -> Image.Image:
+    """Apply CLAHE to a PIL RGB image using LAB luminance channel."""
+    if cv2 is None:
+        raise RuntimeError(
+            "CLAHE-TTA requested but OpenCV is not installed. "
+            "Install opencv-python or opencv-python-headless."
+        )
+
+    image_rgb = np.array(image.convert("RGB"))
+    image_lab = cv2.cvtColor(image_rgb, cv2.COLOR_RGB2LAB)
+    l_channel, a_channel, b_channel = cv2.split(image_lab)
+
+    clahe = cv2.createCLAHE(
+        clipLimit=float(clip_limit),
+        tileGridSize=(int(tile_grid_size), int(tile_grid_size)),
+    )
+    l_channel = clahe.apply(l_channel)
+    image_lab = cv2.merge((l_channel, a_channel, b_channel))
+    image_rgb_clahe = cv2.cvtColor(image_lab, cv2.COLOR_LAB2RGB)
+
+    return Image.fromarray(image_rgb_clahe)
+
+
+def get_base_tta_transform(image_size: int = 224) -> transforms.Compose:
+    """Get the base (non-augmented) TTA transform used for canonical inference."""
+    normalize = transforms.Normalize(mean=IMAGENET_MEAN, std=IMAGENET_STD)
+    return transforms.Compose(
+        [
+            transforms.Resize((image_size, image_size)),
+            transforms.ToTensor(),
+            normalize,
+        ]
+    )
 
 
 def get_tta_transforms(image_size: int = 224) -> List[transforms.Compose]:
@@ -49,16 +94,11 @@ def get_tta_transforms(image_size: int = 224) -> List[transforms.Compose]:
         List of transform compositions
     """
     normalize = transforms.Normalize(mean=IMAGENET_MEAN, std=IMAGENET_STD)
+    base_transform = get_base_tta_transform(image_size)
 
     tta_transforms = [
         # Original
-        transforms.Compose(
-            [
-                transforms.Resize((image_size, image_size)),
-                transforms.ToTensor(),
-                normalize,
-            ]
-        ),
+        base_transform,
         # Horizontal flip
         transforms.Compose(
             [
@@ -126,6 +166,31 @@ def get_tta_transforms(image_size: int = 224) -> List[transforms.Compose]:
     ]
 
     return tta_transforms
+
+
+def get_full_extra_tta_transforms(image_size: int = 224) -> List[transforms.Compose]:
+    """Get additional crop-based TTA transforms used only in full mode."""
+    normalize = transforms.Normalize(mean=IMAGENET_MEAN, std=IMAGENET_STD)
+    scaled_size = int(image_size * 1.1)
+
+    def _corner_crop(index: int) -> transforms.Compose:
+        return transforms.Compose(
+            [
+                transforms.Resize((scaled_size, scaled_size)),
+                transforms.FiveCrop(image_size),
+                transforms.Lambda(lambda crops, idx=index: crops[idx]),
+                transforms.ToTensor(),
+                normalize,
+            ]
+        )
+
+    # FiveCrop order: top-left, top-right, bottom-left, bottom-right, center
+    return [
+        _corner_crop(0),
+        _corner_crop(1),
+        _corner_crop(2),
+        _corner_crop(3),
+    ]
 
 
 class SkinLesionPredictor:
@@ -363,6 +428,9 @@ class SkinLesionPredictor:
         image: Union[str, Path, Image.Image, np.ndarray, bytes],
         tta_mode: Literal["light", "medium", "full"] = "medium",
         aggregation: Literal["mean", "geometric_mean", "max"] = "mean",
+        use_clahe_tta: bool = False,
+        clahe_clip_limit: float = 2.0,
+        clahe_grid_size: int = 8,
         top_k: int = 3,
         include_disclaimer: bool = True,
     ) -> Dict[str, Any]:
@@ -373,6 +441,9 @@ class SkinLesionPredictor:
             image: Input image
             tta_mode: TTA complexity (light: 4 augs, medium: 8 augs, full: all)
             aggregation: How to aggregate predictions (mean, geometric_mean, max)
+            use_clahe_tta: Whether to add CLAHE-processed branch during TTA
+            clahe_clip_limit: CLAHE clip limit
+            clahe_grid_size: CLAHE tile grid size
             top_k: Number of top predictions to return
             include_disclaimer: Whether to include educational disclaimer
 
@@ -391,18 +462,44 @@ class SkinLesionPredictor:
         all_transforms = get_tta_transforms(self.image_size)
 
         if tta_mode == "light":
-            # Original + flips
+            # 4 branches: original + flips
             tta_transforms = all_transforms[:4]
         elif tta_mode == "medium":
-            # Original + flips + rotations
+            # 8 branches: base set (flips + rotations + center zoom crop)
             tta_transforms = all_transforms
-        else:  # full
-            tta_transforms = all_transforms
+        elif tta_mode == "full":
+            # 12 branches: medium + extra corner zoom-crop branches
+            tta_transforms = all_transforms + get_full_extra_tta_transforms(
+                self.image_size
+            )
+        else:
+            valid_modes = ", ".join(TTA_AUG_COUNTS.keys())
+            raise ValueError(
+                f"Invalid tta_mode: {tta_mode!r}. Expected one of: {valid_modes}."
+            )
+
+        if use_clahe_tta and cv2 is None:
+            raise RuntimeError(
+                "CLAHE-TTA requested but OpenCV is not installed. "
+                "Install opencv-python or opencv-python-headless."
+            )
 
         # Collect predictions from all augmentations
         all_probs = []
         for transform in tta_transforms:
             tensor = transform(image).unsqueeze(0).to(self.device)
+            logits = self.model(tensor)
+            probs = F.softmax(logits, dim=1)[0]
+            all_probs.append(probs.cpu().numpy())
+
+        if use_clahe_tta:
+            clahe_image = apply_clahe_to_pil(
+                image,
+                clip_limit=clahe_clip_limit,
+                tile_grid_size=clahe_grid_size,
+            )
+            base_transform = get_base_tta_transform(self.image_size)
+            tensor = base_transform(clahe_image).unsqueeze(0).to(self.device)
             logits = self.model(tensor)
             probs = F.softmax(logits, dim=1)[0]
             all_probs.append(probs.cpu().numpy())
@@ -448,8 +545,9 @@ class SkinLesionPredictor:
             "probabilities": all_probs_dict,
             "top_k_predictions": top_k_predictions,
             "tta_mode": tta_mode,
-            "tta_augmentations": len(tta_transforms),
+            "tta_augmentations": len(tta_transforms) + (1 if use_clahe_tta else 0),
             "aggregation_method": aggregation,
+            "use_clahe_tta": bool(use_clahe_tta),
         }
 
         if include_disclaimer:
@@ -564,6 +662,9 @@ class EnsemblePredictor:
         use_tta: bool = False,
         tta_mode: Literal["light", "medium", "full"] = "medium",
         tta_aggregation: Literal["mean", "geometric_mean", "max"] = "mean",
+        use_clahe_tta: bool = False,
+        clahe_clip_limit: float = 2.0,
+        clahe_grid_size: int = 8,
         top_k: int = 3,
         include_disclaimer: bool = True,
     ) -> Dict[str, Any]:
@@ -576,6 +677,9 @@ class EnsemblePredictor:
             use_tta: Whether to use TTA for each model
             tta_mode: TTA complexity if use_tta=True
             tta_aggregation: How to aggregate TTA predictions
+            use_clahe_tta: Whether to add CLAHE-processed branch during TTA
+            clahe_clip_limit: CLAHE clip limit
+            clahe_grid_size: CLAHE tile grid size
             top_k: Number of top predictions to return
             include_disclaimer: Whether to include disclaimer
 
@@ -591,6 +695,9 @@ class EnsemblePredictor:
                     image=image,
                     tta_mode=tta_mode,
                     aggregation=tta_aggregation,
+                    use_clahe_tta=use_clahe_tta,
+                    clahe_clip_limit=clahe_clip_limit,
+                    clahe_grid_size=clahe_grid_size,
                     include_disclaimer=False,
                 )
             else:

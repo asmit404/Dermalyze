@@ -108,6 +108,30 @@ python src/evaluate.py \
     --images-dir data/HAM10000/images
 ```
 
+**Config-first evaluation (recommended):**
+`src/evaluate.py` now reads TTA defaults from `config.yaml` (via `evaluation.tta`) so you don't need to pass TTA flags every run.
+
+```yaml
+evaluation:
+  tta:
+    use_tta: true
+    mode: medium
+    aggregation: geometric_mean
+    use_clahe_tta: true
+    clahe_clip_limit: 2.0
+    clahe_grid_size: 8
+```
+
+Then run:
+```bash
+python src/evaluate.py \
+    --checkpoint outputs/run_xxx/checkpoint_best.pt \
+    --test-csv outputs/run_xxx/test_split.csv \
+    --images-dir data/HAM10000/images
+```
+
+CLI flags still override config for one-off runs (for example `--tta-mode full`).
+
 **With TTA (Test-Time Augmentation):**
 ```bash
 python src/evaluate.py \
@@ -116,7 +140,7 @@ python src/evaluate.py \
     --images-dir data/HAM10000/images \
     --use-tta --tta-mode medium
 ```
-*TTA modes: `light` (4 aug), `medium` (8 aug), `full` (all aug)*
+*TTA modes: `light` (4 branches: original + flips), `medium` (8 branches: light + 90°/180°/270° rotations + center zoom-crop), `full` (12 branches: medium + 4 corner zoom-crops).*
 
 **Ensemble:**
 ```bash

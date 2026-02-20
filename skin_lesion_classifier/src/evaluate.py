@@ -36,6 +36,7 @@ from sklearn.metrics import (
 from torch.utils.data import DataLoader
 from torchvision import transforms
 from tqdm import tqdm
+import yaml
 
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -50,7 +51,7 @@ from src.data.dataset import (
     IMAGENET_STD,
 )
 from src.models.efficientnet import SkinLesionClassifier
-from src.inference import get_tta_transforms
+from src.tta_constants import TTA_AUG_COUNTS
 
 
 # Configure logging
@@ -59,6 +60,101 @@ logging.basicConfig(
     format="%(asctime)s - %(levelname)s - %(message)s",
 )
 logger = logging.getLogger(__name__)
+
+try:
+    import cv2
+except ImportError:
+    cv2 = None
+
+
+def _apply_clahe_batch(
+    images: torch.Tensor,
+    clip_limit: float = 2.0,
+    tile_grid_size: int = 8,
+) -> torch.Tensor:
+    """Apply CLAHE to a normalized batch tensor (N, C, H, W)."""
+    if cv2 is None:
+        raise RuntimeError(
+            "CLAHE-TTA requested but OpenCV is not installed. "
+            "Install opencv-python or opencv-python-headless."
+        )
+
+    clahe = cv2.createCLAHE(
+        clipLimit=float(clip_limit),
+        tileGridSize=(int(tile_grid_size), int(tile_grid_size)),
+    )
+
+    device = images.device
+    dtype = images.dtype
+
+    mean = torch.tensor(IMAGENET_MEAN, device=device, dtype=dtype).view(1, 3, 1, 1)
+    std = torch.tensor(IMAGENET_STD, device=device, dtype=dtype).view(1, 3, 1, 1)
+
+    denorm = (images * std + mean).clamp(0.0, 1.0)
+    denorm_np = (denorm.detach().permute(0, 2, 3, 1).cpu().numpy() * 255.0).astype(
+        np.uint8
+    )
+
+    clahe_batch = []
+    for image_rgb in denorm_np:
+        image_lab = cv2.cvtColor(image_rgb, cv2.COLOR_RGB2LAB)
+        l_channel, a_channel, b_channel = cv2.split(image_lab)
+        l_channel = clahe.apply(l_channel)
+        image_lab = cv2.merge((l_channel, a_channel, b_channel))
+        image_rgb_clahe = cv2.cvtColor(image_lab, cv2.COLOR_LAB2RGB)
+        clahe_batch.append(image_rgb_clahe)
+
+    clahe_np = np.stack(clahe_batch).astype(np.float32) / 255.0
+    clahe_tensor = torch.from_numpy(clahe_np).permute(0, 3, 1, 2).to(device=device)
+
+    return ((clahe_tensor - mean) / std).to(dtype=dtype)
+
+
+def _zoom_crop_batch(
+    images: torch.Tensor,
+    position: Literal["center", "top_left", "top_right", "bottom_left", "bottom_right"],
+    scale: float = 1.1,
+) -> torch.Tensor:
+    """Apply zoom-in then crop back to original size at a given position."""
+    _, _, height, width = images.shape
+    zoom_h = max(int(round(height * scale)), height)
+    zoom_w = max(int(round(width * scale)), width)
+
+    zoomed = F.interpolate(
+        images,
+        size=(zoom_h, zoom_w),
+        mode="bilinear",
+        align_corners=False,
+    )
+
+    if position == "center":
+        y0 = (zoom_h - height) // 2
+        x0 = (zoom_w - width) // 2
+    elif position == "top_left":
+        y0 = 0
+        x0 = 0
+    elif position == "top_right":
+        y0 = 0
+        x0 = zoom_w - width
+    elif position == "bottom_left":
+        y0 = zoom_h - height
+        x0 = 0
+    else:  # bottom_right
+        y0 = zoom_h - height
+        x0 = zoom_w - width
+
+    return zoomed[:, :, y0 : y0 + height, x0 : x0 + width]
+
+
+def get_tta_aug_count(tta_mode: Literal["light", "medium", "full"]) -> int:
+    """Return number of tensor-space TTA branches for a mode (excluding CLAHE)."""
+    try:
+        return TTA_AUG_COUNTS[tta_mode]
+    except KeyError as exc:
+        valid_modes = ", ".join(TTA_AUG_COUNTS.keys())
+        raise ValueError(
+            f"Invalid tta_mode: {tta_mode!r}. Expected one of: {valid_modes}."
+        ) from exc
 
 
 def compute_ensemble_weights_from_metrics(
@@ -194,6 +290,9 @@ def get_predictions_with_tta(
     device: torch.device,
     tta_mode: Literal["light", "medium", "full"] = "medium",
     aggregation: Literal["mean", "geometric_mean", "max"] = "mean",
+    use_clahe_tta: bool = False,
+    clahe_clip_limit: float = 2.0,
+    clahe_grid_size: int = 8,
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     """
     Get model predictions with Test-Time Augmentation.
@@ -204,6 +303,9 @@ def get_predictions_with_tta(
         device: Device to run inference on
         tta_mode: TTA complexity (light, medium, full)
         aggregation: How to aggregate TTA predictions
+        use_clahe_tta: Whether to add a CLAHE-augmented branch during TTA
+        clahe_clip_limit: CLAHE clip limit
+        clahe_grid_size: CLAHE tile grid size
 
     Returns:
         Tuple of (true_labels, predicted_labels, predicted_probabilities)
@@ -212,17 +314,11 @@ def get_predictions_with_tta(
     all_preds = []
     all_probs = []
 
-    # Get TTA transforms
-    tta_transforms = get_tta_transforms(
-        dataloader.dataset.transform.transforms[0].size[0]
-    )
-
-    if tta_mode == "light":
-        tta_transforms = tta_transforms[:4]  # Original + flips
-    elif tta_mode == "medium":
-        tta_transforms = tta_transforms  # All transforms
-    else:  # full
-        tta_transforms = tta_transforms
+    if use_clahe_tta and cv2 is None:
+        raise RuntimeError(
+            "CLAHE-TTA requested but OpenCV is not installed. "
+            "Install opencv-python or opencv-python-headless."
+        )
 
     for images, targets in tqdm(dataloader, desc=f"Evaluating with TTA ({tta_mode})"):
         batch_size = images.size(0)
@@ -230,12 +326,16 @@ def get_predictions_with_tta(
         # Collect TTA predictions for each image in batch
         batch_tta_probs = []
 
-        for aug_idx, tta_transform in enumerate(tta_transforms):
+        images_device = images.to(device)
+
+        total_aug_count = get_tta_aug_count(tta_mode)
+
+        for aug_idx in range(total_aug_count):
             # Apply TTA transform to each image
             # Note: We need to denormalize, apply transform, and renormalize
             # For simplicity, we'll use the original images and standard augmentations
 
-            aug_images = images.to(device)
+            aug_images = images_device
 
             # Simple augmentations that can be done in tensor space
             if aug_idx == 1:  # Horizontal flip
@@ -250,9 +350,37 @@ def get_predictions_with_tta(
                 aug_images = torch.rot90(aug_images, k=2, dims=[2, 3])
             elif aug_idx == 6:  # 270° rotation
                 aug_images = torch.rot90(aug_images, k=3, dims=[2, 3])
-            # aug_idx == 0 or 7: use original
+            elif aug_idx == 7:  # center zoom crop
+                aug_images = _zoom_crop_batch(aug_images, position="center", scale=1.1)
+            elif aug_idx == 8:  # top-left zoom crop (full mode only)
+                aug_images = _zoom_crop_batch(
+                    aug_images, position="top_left", scale=1.1
+                )
+            elif aug_idx == 9:  # top-right zoom crop (full mode only)
+                aug_images = _zoom_crop_batch(
+                    aug_images, position="top_right", scale=1.1
+                )
+            elif aug_idx == 10:  # bottom-left zoom crop (full mode only)
+                aug_images = _zoom_crop_batch(
+                    aug_images, position="bottom_left", scale=1.1
+                )
+            elif aug_idx == 11:  # bottom-right zoom crop (full mode only)
+                aug_images = _zoom_crop_batch(
+                    aug_images, position="bottom_right", scale=1.1
+                )
+            # aug_idx == 0: use original
 
             logits = model(aug_images)
+            probs = F.softmax(logits, dim=1)
+            batch_tta_probs.append(probs.cpu().numpy())
+
+        if use_clahe_tta:
+            clahe_images = _apply_clahe_batch(
+                images,
+                clip_limit=clahe_clip_limit,
+                tile_grid_size=clahe_grid_size,
+            ).to(device)
+            logits = model(clahe_images)
             probs = F.softmax(logits, dim=1)
             batch_tta_probs.append(probs.cpu().numpy())
 
@@ -295,6 +423,9 @@ def get_ensemble_predictions(
     use_tta: bool = False,
     tta_mode: Literal["light", "medium", "full"] = "medium",
     tta_aggregation: Literal["mean", "geometric_mean", "max"] = "mean",
+    use_clahe_tta: bool = False,
+    clahe_clip_limit: float = 2.0,
+    clahe_grid_size: int = 8,
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     """
     Get ensemble predictions from multiple models.
@@ -308,6 +439,9 @@ def get_ensemble_predictions(
         use_tta: Whether to use TTA for each model
         tta_mode: TTA complexity if use_tta=True
         tta_aggregation: How to aggregate TTA predictions
+        use_clahe_tta: Whether to add a CLAHE-augmented branch during TTA
+        clahe_clip_limit: CLAHE clip limit
+        clahe_grid_size: CLAHE tile grid size
 
     Returns:
         Tuple of (true_labels, predicted_labels, predicted_probabilities)
@@ -330,6 +464,14 @@ def get_ensemble_predictions(
     for images, targets in tqdm(dataloader, desc=desc):
         # Collect predictions from all models
         model_probs_list = []
+        clahe_images = None
+        # Precompute once per batch only when it is guaranteed to be used.
+        if use_tta and use_clahe_tta:
+            clahe_images = _apply_clahe_batch(
+                images,
+                clip_limit=clahe_clip_limit,
+                tile_grid_size=clahe_grid_size,
+            ).to(device)
 
         for model in models:
             if use_tta:
@@ -339,7 +481,9 @@ def get_ensemble_predictions(
 
                 # Collect TTA predictions
                 tta_probs = []
-                for aug_idx in range(8 if tta_mode in ["medium", "full"] else 4):
+                total_aug_count = get_tta_aug_count(tta_mode)
+
+                for aug_idx in range(total_aug_count):
                     aug_images = images_device
 
                     if aug_idx == 1:  # H flip
@@ -354,6 +498,29 @@ def get_ensemble_predictions(
                         aug_images = torch.rot90(aug_images, k=2, dims=[2, 3])
                     elif aug_idx == 6 and tta_mode in ["medium", "full"]:  # 270°
                         aug_images = torch.rot90(aug_images, k=3, dims=[2, 3])
+                    elif aug_idx == 7 and tta_mode in [
+                        "medium",
+                        "full",
+                    ]:  # center zoom crop
+                        aug_images = _zoom_crop_batch(
+                            aug_images, position="center", scale=1.1
+                        )
+                    elif aug_idx == 8 and tta_mode == "full":  # top-left zoom crop
+                        aug_images = _zoom_crop_batch(
+                            aug_images, position="top_left", scale=1.1
+                        )
+                    elif aug_idx == 9 and tta_mode == "full":  # top-right zoom crop
+                        aug_images = _zoom_crop_batch(
+                            aug_images, position="top_right", scale=1.1
+                        )
+                    elif aug_idx == 10 and tta_mode == "full":  # bottom-left zoom crop
+                        aug_images = _zoom_crop_batch(
+                            aug_images, position="bottom_left", scale=1.1
+                        )
+                    elif aug_idx == 11 and tta_mode == "full":  # bottom-right zoom crop
+                        aug_images = _zoom_crop_batch(
+                            aug_images, position="bottom_right", scale=1.1
+                        )
 
                     logits = model(aug_images)
                     probs = F.softmax(logits, dim=1)
@@ -364,6 +531,12 @@ def get_ensemble_predictions(
                 tta_probs = np.transpose(
                     tta_probs, (1, 0, 2)
                 )  # (batch_size, n_augs, n_classes)
+
+                if use_clahe_tta and clahe_images is not None:
+                    logits = model(clahe_images)
+                    probs = F.softmax(logits, dim=1).cpu().numpy()
+                    probs = probs[:, np.newaxis, :]  # (batch_size, 1, n_classes)
+                    tta_probs = np.concatenate([tta_probs, probs], axis=1)
 
                 if tta_aggregation == "mean":
                     final_probs = np.mean(tta_probs, axis=1)
@@ -750,6 +923,9 @@ def evaluate(
     use_tta: bool = False,
     tta_mode: Literal["light", "medium", "full"] = "medium",
     tta_aggregation: Literal["mean", "geometric_mean", "max"] = "mean",
+    use_clahe_tta: bool = False,
+    clahe_clip_limit: float = 2.0,
+    clahe_grid_size: int = 8,
     use_ensemble: bool = False,
     ensemble_weights: Optional[List[float]] = None,
     ensemble_aggregation: Literal[
@@ -769,6 +945,9 @@ def evaluate(
         use_tta: Whether to use test-time augmentation
         tta_mode: TTA complexity (light/medium/full)
         tta_aggregation: How to aggregate TTA predictions
+        use_clahe_tta: Whether to add CLAHE as an extra TTA branch
+        clahe_clip_limit: CLAHE clip limit
+        clahe_grid_size: CLAHE tile grid size
         use_ensemble: Whether to use ensemble evaluation
         ensemble_weights: Optional custom weights for models. If None and
             ensemble_aggregation='weighted_mean', weights are automatically
@@ -833,6 +1012,12 @@ def evaluate(
             eval_mode = f"TTA-{tta_mode}"
 
     logger.info(f"Evaluation mode: {eval_mode}")
+    if use_tta and use_clahe_tta:
+        logger.info(
+            "CLAHE-TTA enabled (clip_limit=%.2f, grid_size=%d)",
+            clahe_clip_limit,
+            clahe_grid_size,
+        )
 
     # Load test data
     logger.info(f"Loading test data from: {test_csv}")
@@ -869,6 +1054,9 @@ def evaluate(
             use_tta=use_tta,
             tta_mode=tta_mode,
             tta_aggregation=tta_aggregation,
+            use_clahe_tta=use_clahe_tta,
+            clahe_clip_limit=clahe_clip_limit,
+            clahe_grid_size=clahe_grid_size,
         )
     elif use_tta:
         y_true, y_pred, y_prob = get_predictions_with_tta(
@@ -877,6 +1065,9 @@ def evaluate(
             device=device,
             tta_mode=tta_mode,
             aggregation=tta_aggregation,
+            use_clahe_tta=use_clahe_tta,
+            clahe_clip_limit=clahe_clip_limit,
+            clahe_grid_size=clahe_grid_size,
         )
     else:
         y_true, y_pred, y_prob = get_predictions(model, test_loader, device)
@@ -916,6 +1107,9 @@ def evaluate(
         metrics["tta_config"] = {
             "mode": tta_mode,
             "aggregation": tta_aggregation,
+            "use_clahe_tta": bool(use_clahe_tta),
+            "clahe_clip_limit": float(clahe_clip_limit),
+            "clahe_grid_size": int(clahe_grid_size),
         }
     if use_ensemble or isinstance(checkpoint_path, list):
         metrics["ensemble_config"] = {
@@ -970,6 +1164,12 @@ def main() -> None:
         description="Evaluate skin lesion classifier with optional TTA and Ensemble"
     )
     parser.add_argument(
+        "--config",
+        type=Path,
+        default=Path("config.yaml"),
+        help="Optional config file to source evaluation defaults (e.g., CLAHE-TTA)",
+    )
+    parser.add_argument(
         "--checkpoint",
         type=Path,
         nargs="+",
@@ -1008,20 +1208,39 @@ def main() -> None:
     )
     parser.add_argument(
         "--use-tta",
-        action="store_true",
+        action=argparse.BooleanOptionalAction,
+        default=None,
         help="Use test-time augmentation",
     )
     parser.add_argument(
         "--tta-mode",
         choices=["light", "medium", "full"],
-        default="medium",
+        default=None,
         help="TTA complexity (light: 4 augs, medium: 8 augs, full: all)",
     )
     parser.add_argument(
         "--tta-aggregation",
         choices=["mean", "geometric_mean", "max"],
-        default="mean",
+        default=None,
         help="How to aggregate TTA predictions",
+    )
+    parser.add_argument(
+        "--use-clahe-tta",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Add CLAHE-processed branch during TTA (requires OpenCV)",
+    )
+    parser.add_argument(
+        "--clahe-clip-limit",
+        type=float,
+        default=None,
+        help="CLAHE clip limit used when --use-clahe-tta is enabled",
+    )
+    parser.add_argument(
+        "--clahe-grid-size",
+        type=int,
+        default=None,
+        help="CLAHE tile grid size used when --use-clahe-tta is enabled",
     )
     parser.add_argument(
         "--ensemble-weights",
@@ -1037,6 +1256,45 @@ def main() -> None:
     )
     args = parser.parse_args()
 
+    config_defaults: Dict[str, Any] = {}
+    if args.config is not None and args.config.exists():
+        with open(args.config, "r") as f:
+            config_defaults = yaml.safe_load(f) or {}
+
+    tta_defaults = config_defaults.get("evaluation", {}).get("tta", {})
+
+    use_tta = (
+        bool(args.use_tta)
+        if args.use_tta is not None
+        else bool(tta_defaults.get("use_tta", False))
+    )
+    tta_mode = (
+        str(args.tta_mode)
+        if args.tta_mode is not None
+        else str(tta_defaults.get("mode", "medium"))
+    )
+    tta_aggregation = (
+        str(args.tta_aggregation)
+        if args.tta_aggregation is not None
+        else str(tta_defaults.get("aggregation", "mean"))
+    )
+
+    use_clahe_tta = (
+        bool(args.use_clahe_tta)
+        if args.use_clahe_tta is not None
+        else bool(tta_defaults.get("use_clahe_tta", False))
+    )
+    clahe_clip_limit = (
+        float(args.clahe_clip_limit)
+        if args.clahe_clip_limit is not None
+        else float(tta_defaults.get("clahe_clip_limit", 2.0))
+    )
+    clahe_grid_size = (
+        int(args.clahe_grid_size)
+        if args.clahe_grid_size is not None
+        else int(tta_defaults.get("clahe_grid_size", 8))
+    )
+
     # Determine if using ensemble
     use_ensemble = len(args.checkpoint) > 1
     checkpoint_path = args.checkpoint if use_ensemble else args.checkpoint[0]
@@ -1048,9 +1306,12 @@ def main() -> None:
         output_dir=args.output,
         batch_size=args.batch_size,
         num_workers=args.num_workers,
-        use_tta=args.use_tta,
-        tta_mode=args.tta_mode,
-        tta_aggregation=args.tta_aggregation,
+        use_tta=use_tta,
+        tta_mode=tta_mode,
+        tta_aggregation=tta_aggregation,
+        use_clahe_tta=use_clahe_tta,
+        clahe_clip_limit=clahe_clip_limit,
+        clahe_grid_size=clahe_grid_size,
         use_ensemble=use_ensemble,
         ensemble_weights=args.ensemble_weights,
         ensemble_aggregation=args.ensemble_aggregation,
