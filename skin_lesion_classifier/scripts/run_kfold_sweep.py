@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-Run a 5-fold StratifiedGroupKFold sweep and aggregate metrics.
+Run a StratifiedGroupKFold sweep and aggregate metrics.
 
 This script:
-1) Forces fold indices 0..4 using config.data.kfold.fold_index
+1) Forces fold indices 0..(n_splits-1) using config.data.kfold.fold_index
 2) Trains one model per fold
 3) Evaluates each fold model on its test split
 4) Optionally evaluates each fold with TTA
@@ -38,14 +38,14 @@ def write_yaml(path: Path, content: Dict[str, Any]) -> None:
 
 
 def create_fold_config(
-    base_config_path: Path, fold_index: int, output_path: Path
+    base_config_path: Path, fold_index: int, n_splits: int, output_path: Path
 ) -> Path:
     config = load_yaml(base_config_path)
 
     data_cfg = config.setdefault("data", {})
     data_cfg["use_stratified_group_kfold"] = True
     kfold_cfg = data_cfg.setdefault("kfold", {})
-    kfold_cfg["n_splits"] = 5
+    kfold_cfg["n_splits"] = n_splits
     kfold_cfg["fold_index"] = fold_index
     kfold_cfg.setdefault("group_column", "lesion_id")
 
@@ -67,9 +67,10 @@ def build_command_plan(
     run_tta: bool,
     tta_mode: str,
     tta_aggregation: str,
+    n_splits: int,
 ) -> List[str]:
     commands: List[str] = []
-    for fold_index in range(5):
+    for fold_index in range(n_splits):
         fold_dir = output_root / f"fold_{fold_index}"
         fold_config = fold_config_paths[fold_index]
         commands.append(
@@ -131,7 +132,7 @@ def aggregate_numeric_metrics(metrics_by_fold: List[Dict[str, Any]]) -> Dict[str
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Run 5-fold stratified-group sweep and aggregate fold metrics"
+        description="Run stratified-group sweep and aggregate fold metrics"
     )
     parser.add_argument(
         "--config",
@@ -184,6 +185,14 @@ def main() -> None:
     if not isinstance(data_cfg, dict):
         raise ValueError("Invalid config.data section")
 
+    kfold_cfg = data_cfg.get("kfold", {})
+    if not isinstance(kfold_cfg, dict):
+        kfold_cfg = {}
+
+    n_splits = int(kfold_cfg.get("n_splits", 5) or 5)
+    if n_splits < 2:
+        raise ValueError("n_splits must be >= 2")
+
     images_dir_value = data_cfg.get("images_dir", "data/HAM10000/images")
     images_dir = (project_root / images_dir_value).resolve()
 
@@ -199,10 +208,11 @@ def main() -> None:
 
     fold_config_dir = output_root / "fold_configs"
     fold_config_paths: Dict[int, Path] = {}
-    for fold_index in range(5):
+    for fold_index in range(n_splits):
         fold_config_paths[fold_index] = create_fold_config(
             base_config_path=base_config_path,
             fold_index=fold_index,
+            n_splits=n_splits,
             output_path=fold_config_dir / f"fold_{fold_index}.yaml",
         )
 
@@ -213,6 +223,7 @@ def main() -> None:
         run_tta=args.run_tta,
         tta_mode=args.tta_mode,
         tta_aggregation=args.tta_aggregation,
+        n_splits=n_splits,
     )
 
     plan_path = output_root / "kfold_command_plan.sh"
@@ -220,14 +231,14 @@ def main() -> None:
         "#!/bin/bash",
         "set -euo pipefail",
         "",
-        "# 5-fold sweep command plan (fold indices 0..4)",
+        f"# {n_splits}-fold sweep command plan (fold indices 0..{n_splits - 1})",
     ]
     plan_lines.extend(command_plan)
     plan_path.write_text("\n".join(plan_lines) + "\n")
     plan_path.chmod(0o755)
 
     print("=" * 70)
-    print("Running 5-fold sweep (fold indices 0..4)")
+    print(f"Running {n_splits}-fold sweep (fold indices 0..{n_splits - 1})")
     print("=" * 70)
     print(f"Base config: {base_config_path}")
     print(f"Output root: {output_root}")
@@ -237,12 +248,12 @@ def main() -> None:
     fold_results: List[Dict[str, Any]] = []
     fold_results_tta: List[Dict[str, Any]] = []
 
-    for fold_index in range(5):
+    for fold_index in range(n_splits):
         fold_dir = output_root / f"fold_{fold_index}"
         fold_dir.mkdir(parents=True, exist_ok=True)
 
         print("-" * 70)
-        print(f"Fold {fold_index}/4")
+        print(f"Fold {fold_index}/{n_splits - 1}")
         print("-" * 70)
 
         train_command = [
@@ -361,10 +372,11 @@ def main() -> None:
 
     summary = {
         "sweep_type": "stratified_group_kfold",
-        "fold_indices": [0, 1, 2, 3, 4],
+        "fold_indices": list(range(n_splits)),
         "base_config": str(base_config_path),
         "output_root": str(output_root),
         "command_plan_path": str(plan_path),
+        "n_splits": n_splits,
         "num_folds": len(fold_results),
         "aggregate_metrics": aggregated,
         "best_fold": {
@@ -419,7 +431,7 @@ def main() -> None:
 
     print()
     print("=" * 70)
-    print("5-fold sweep complete")
+    print(f"{n_splits}-fold sweep complete")
     print("=" * 70)
     print(f"Summary: {summary_path}")
 
