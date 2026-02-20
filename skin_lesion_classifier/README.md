@@ -97,6 +97,8 @@ This creates `outputs/kfold_sweep_*/kfold_command_plan.sh` and aggregates fold e
 - `data.use_stratified_group_kfold`: true/false (fold-based training split)
 - `data.kfold.n_splits`, `data.kfold.fold_index`, `data.kfold.group_column`
 
+See `config.md` for a complete parameter reference, valid options, and defaults.
+
 
 ## Evaluation
 
