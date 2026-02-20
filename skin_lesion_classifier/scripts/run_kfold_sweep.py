@@ -24,6 +24,10 @@ from typing import Any, Dict, List
 import yaml
 
 
+VALID_TTA_MODES = ("light", "medium", "full")
+VALID_TTA_AGGREGATIONS = ("mean", "geometric_mean", "max")
+
+
 def load_yaml(path: Path) -> Dict[str, Any]:
     with open(path, "r") as file:
         data = yaml.safe_load(file)
@@ -154,19 +158,20 @@ def main() -> None:
     )
     parser.add_argument(
         "--run-tta",
-        action="store_true",
+        action=argparse.BooleanOptionalAction,
+        default=None,
         help="Also run TTA evaluation per fold and aggregate separately",
     )
     parser.add_argument(
         "--tta-mode",
-        choices=["light", "medium", "full"],
-        default="medium",
+        choices=list(VALID_TTA_MODES),
+        default=None,
         help="TTA mode to use when --run-tta is enabled",
     )
     parser.add_argument(
         "--tta-aggregation",
-        choices=["mean", "geometric_mean", "max"],
-        default="mean",
+        choices=list(VALID_TTA_AGGREGATIONS),
+        default=None,
         help="TTA aggregation method for evaluate.py",
     )
     args = parser.parse_args()
@@ -181,6 +186,36 @@ def main() -> None:
         raise FileNotFoundError(f"Config not found: {base_config_path}")
 
     base_config = load_yaml(base_config_path)
+    tta_defaults = base_config.get("evaluation", {}).get("tta", {})
+
+    run_tta = (
+        args.run_tta
+        if args.run_tta is not None
+        else bool(tta_defaults.get("use_tta", False))
+    )
+    tta_mode = (
+        str(args.tta_mode)
+        if args.tta_mode is not None
+        else str(tta_defaults.get("mode", "medium"))
+    )
+    tta_aggregation = (
+        str(args.tta_aggregation)
+        if args.tta_aggregation is not None
+        else str(tta_defaults.get("aggregation", "mean"))
+    )
+
+    if tta_mode not in VALID_TTA_MODES:
+        raise ValueError(
+            f"Invalid TTA mode in CLI/config: {tta_mode!r}. "
+            f"Expected one of: {list(VALID_TTA_MODES)}"
+        )
+
+    if tta_aggregation not in VALID_TTA_AGGREGATIONS:
+        raise ValueError(
+            f"Invalid TTA aggregation in CLI/config: {tta_aggregation!r}. "
+            f"Expected one of: {list(VALID_TTA_AGGREGATIONS)}"
+        )
+
     data_cfg = base_config.get("data", {})
     if not isinstance(data_cfg, dict):
         raise ValueError("Invalid config.data section")
@@ -220,9 +255,9 @@ def main() -> None:
         fold_config_paths=fold_config_paths,
         output_root=output_root,
         images_dir=images_dir,
-        run_tta=args.run_tta,
-        tta_mode=args.tta_mode,
-        tta_aggregation=args.tta_aggregation,
+        run_tta=run_tta,
+        tta_mode=tta_mode,
+        tta_aggregation=tta_aggregation,
         n_splits=n_splits,
     )
 
@@ -305,7 +340,7 @@ def main() -> None:
             }
         )
 
-        if args.run_tta:
+        if run_tta:
             eval_tta_output_dir = fold_dir / "evaluation_results_tta"
             eval_tta_command = [
                 sys.executable,
@@ -320,9 +355,9 @@ def main() -> None:
                 str(eval_tta_output_dir),
                 "--use-tta",
                 "--tta-mode",
-                args.tta_mode,
+                tta_mode,
                 "--tta-aggregation",
-                args.tta_aggregation,
+                tta_aggregation,
             ]
             run_command(eval_tta_command, cwd=project_root)
 
@@ -400,8 +435,8 @@ def main() -> None:
     ):
         summary["tta"] = {
             "enabled": True,
-            "tta_mode": args.tta_mode,
-            "tta_aggregation": args.tta_aggregation,
+            "tta_mode": tta_mode,
+            "tta_aggregation": tta_aggregation,
             "num_folds": len(fold_results_tta),
             "aggregate_metrics": aggregated_tta,
             "best_fold": {
