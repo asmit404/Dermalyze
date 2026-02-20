@@ -53,7 +53,7 @@ training:
   persistent_workers: true
   use_weighted_sampling: true
   sampling_weight_power: 0.35
-  augmentation: light
+  augmentation: randaugment
 
   # Performance Optimizations
   use_amp: false
@@ -90,8 +90,9 @@ training:
 # -----------------------------------------------------------------------------
 loss:
   type: label_smoothing
+  alpha: [1, 1, 1, 1, 1, 1, 1]
   label_smoothing: 0.03
-  class_weight_power: 0.35
+  class_weight_power: 0.0
 
 # -----------------------------------------------------------------------------
 # Output Configuration

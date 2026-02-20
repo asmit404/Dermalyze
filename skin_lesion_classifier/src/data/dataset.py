@@ -173,7 +173,9 @@ class HAM10000Dataset(Dataset):
 def get_transforms(
     split: Literal["train", "val", "test"],
     image_size: int = 224,
-    augmentation_strength: Literal["light", "medium", "heavy", "domain"] = "medium",
+    augmentation_strength: Literal[
+        "light", "medium", "heavy", "domain", "randaugment"
+    ] = "medium",
 ) -> transforms.Compose:
     """
     Get image transforms for different dataset splits.
@@ -229,7 +231,7 @@ def get_transforms(
                     p=0.2, scale=(0.02, 0.15), ratio=(0.3, 3.3), value="random"
                 )
             ]
-        else:  # domain (stronger, domain-robust)
+        elif augmentation_strength == "domain":
             aug_transforms = [
                 transforms.RandomHorizontalFlip(p=0.5),
                 transforms.RandomVerticalFlip(p=0.5),
@@ -252,6 +254,24 @@ def get_transforms(
                     p=0.2, scale=(0.02, 0.12), ratio=(0.3, 3.3), value="random"
                 )
             ]
+        elif augmentation_strength == "randaugment":
+            aug_transforms = [
+                transforms.RandomHorizontalFlip(p=0.5),
+                transforms.RandomVerticalFlip(p=0.5),
+                transforms.RandAugment(num_ops=2, magnitude=9),
+                transforms.RandomAffine(
+                    degrees=0, translate=(0.1, 0.1), scale=(0.9, 1.1)
+                ),
+            ]
+            post_transforms = [
+                transforms.RandomErasing(
+                    p=0.1, scale=(0.02, 0.12), ratio=(0.3, 3.3), value="random"
+                )
+            ]
+        else:
+            raise ValueError(
+                "augmentation_strength must be one of: light, medium, heavy, domain, randaugment"
+            )
 
         return transforms.Compose(
             [
@@ -438,7 +458,9 @@ def create_dataloaders(
     batch_size: int = 32,
     num_workers: int = 4,
     image_size: int = 224,
-    augmentation_strength: Literal["light", "medium", "heavy", "domain"] = "medium",
+    augmentation_strength: Literal[
+        "light", "medium", "heavy", "domain", "randaugment"
+    ] = "medium",
     use_weighted_sampling: bool = True,
     weighted_sampling_power: float = 1.0,
     pin_memory: bool = True,
