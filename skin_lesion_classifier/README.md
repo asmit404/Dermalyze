@@ -87,6 +87,13 @@ python scripts/run_kfold_sweep.py --config config.yaml
 ```
 This creates `outputs/kfold_sweep_*/kfold_command_plan.sh` and aggregates fold evaluation metrics into `outputs/kfold_sweep_*/kfold_summary.json`.
 
+**Run folds in parallel (faster on multi-GPU / multi-node setups):**
+```bash
+python scripts/run_kfold_sweep.py --config config.yaml --max-parallel-folds 5
+```
+Each fold still runs `train -> evaluate -> evaluate_tta` in order, but different folds run concurrently. Logs are written per fold at `outputs/kfold_sweep_*/fold_<k>/fold_run.log`.
+The CLI shows a live fold-level progress bar while concurrent folds are running.
+
 **Key config options:**
 - `model.dropout_rate`: 0.35 (regularization)
 - `training.batch_size`: 32
