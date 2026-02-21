@@ -347,8 +347,8 @@ def train_one_epoch(
             optimizer.zero_grad(set_to_none=True)
 
         # Forward pass with mixed precision
-        if use_amp and device.type == "cuda":
-            with autocast(device_type="cuda"):
+        if use_amp:
+            with autocast(device_type=device.type):
                 outputs = model(images)
                 if use_mix:
                     loss = lam * criterion(outputs, targets_a) + (
@@ -360,17 +360,24 @@ def train_one_epoch(
             # Scale loss for gradient accumulation
             loss = loss / gradient_accumulation_steps
 
-            # Backward pass with gradient scaling
-            scaler.scale(loss).backward()
+            # Backward pass (GradScaler for CUDA only)
+            if scaler is not None:
+                scaler.scale(loss).backward()
+            else:
+                loss.backward()
 
             # Only step optimizer after accumulating gradients
             if (batch_idx + 1) % gradient_accumulation_steps == 0 or (
                 batch_idx + 1
             ) == len(train_loader):
-                scaler.unscale_(optimizer)
+                if scaler is not None:
+                    scaler.unscale_(optimizer)
                 torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
-                scaler.step(optimizer)
-                scaler.update()
+                if scaler is not None:
+                    scaler.step(optimizer)
+                    scaler.update()
+                else:
+                    optimizer.step()
                 if ema is not None:
                     ema.update(model)
         else:
@@ -653,7 +660,9 @@ def train(
     lr = train_config.get("lr", 1e-4)
     weight_decay = train_config.get("weight_decay", 0.01)
     amp_requested = bool(train_config.get("use_amp", True))
-    use_amp = amp_requested and device.type == "cuda"
+    amp_supported_devices = {"cuda", "mps"}
+    use_amp = amp_requested and device.type in amp_supported_devices
+    use_grad_scaler = use_amp and device.type == "cuda"
     mixup_alpha = float(train_config.get("mixup_alpha", 0.0) or 0.0)
     cutmix_alpha = float(train_config.get("cutmix_alpha", 0.0) or 0.0)
     mixup_prob = float(train_config.get("mixup_prob", 0.0) or 0.0)
@@ -664,11 +673,14 @@ def train(
     gradient_accumulation_steps = int(
         train_config.get("gradient_accumulation_steps", 1) or 1
     )
-    if use_amp:
-        logger.info("AMP: enabled (CUDA mixed precision)")
-    elif amp_requested and device.type != "cuda":
+    if use_amp and device.type == "cuda":
+        logger.info("AMP: enabled (CUDA autocast + GradScaler)")
+    elif use_amp and device.type == "mps":
+        logger.info("AMP: enabled (MPS autocast)")
+    elif amp_requested and device.type not in amp_supported_devices:
         logger.info(
-            "AMP: disabled (requested in config, but only CUDA supports AMP here; device=%s)",
+            "AMP: disabled (requested in config, but this build supports AMP only on %s; device=%s)",
+            sorted(amp_supported_devices),
             device.type,
         )
     else:
@@ -834,7 +846,7 @@ def train(
         return optimizer, scheduler
 
     # Initialize gradient scaler for mixed precision
-    scaler = GradScaler() if use_amp else None
+    scaler = GradScaler("cuda") if use_grad_scaler else None
 
     # Early stopping
     early_stopping = EarlyStopping(
