@@ -12,7 +12,7 @@ data:
   val_size: 0.15
   test_size: 0.15
   lesion_aware: true
-  use_stratified_group_kfold: false
+  use_stratified_group_kfold: true
   kfold:
     n_splits: 5
     fold_index: 0
@@ -23,7 +23,7 @@ data:
 # -----------------------------------------------------------------------------
 model:
   num_classes: 7
-  image_size: 384
+  image_size: 224
   pretrained: true
   dropout_rate: 0.3
   freeze_backbone: false
@@ -33,7 +33,7 @@ model:
 # -----------------------------------------------------------------------------
 training:
   seed: 42
-  batch_size: 4
+  batch_size: 16
   epochs: 40
   lr: 0.00025
   weight_decay: 0.02
@@ -43,8 +43,8 @@ training:
   stage1_lr: 0.001
   stage1_weight_decay: 0.01
   stage2_epochs: 35
-  stage_epoch_mode: explicit
-  stage2_lr: 0.000125
+  stage_epoch_mode: fit_total
+  stage2_lr: 0.00025
   stage2_weight_decay: 0.02
 
   # Data Loading
@@ -52,19 +52,19 @@ training:
   prefetch_factor: 2
   persistent_workers: true
   use_weighted_sampling: true
-  sampling_weight_power: 0.55
-  augmentation: heavy
+  sampling_weight_power: 0.35
+  augmentation: light
 
   # Performance Optimizations
   use_amp: true
   use_gradient_checkpointing: true
-  gradient_accumulation_steps: 4
+  gradient_accumulation_steps: 2
 
   # Data Augmentation
-  mixup_alpha: 0.2
-  cutmix_alpha: 0.2
-  mixup_prob: 0.3
-  cutmix_prob: 0.3
+  mixup_alpha: 0.1
+  cutmix_alpha: 0.1
+  mixup_prob: 0.25
+  cutmix_prob: 0.15
 
   # Learning Rate Scheduler
   scheduler:
@@ -92,7 +92,7 @@ loss:
   type: focal
   alpha: null
   label_smoothing: 0.03
-  class_weight_power: 1.2
+  class_weight_power: 0.35
 
 # -----------------------------------------------------------------------------
 # Output Configuration
@@ -108,6 +108,6 @@ evaluation:
     use_tta: true
     mode: full
     aggregation: geometric_mean
-    use_clahe_tta: true
+    use_clahe_tta: false
     clahe_clip_limit: 2.0
     clahe_grid_size: 8
