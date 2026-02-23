@@ -168,6 +168,35 @@ python scripts/run_kfold_sweep.py --config config.yaml --max-parallel-folds 5
 Each fold still runs `train -> evaluate -> evaluate_tta` in order, but different folds run concurrently. Logs are written per fold at `outputs/kfold_sweep_*/fold_<k>/fold_run.log`.
 The CLI shows a live fold-level progress bar while concurrent folds are running.
 
+**Optuna hyperparameter tuning (wired to `src/train.py`):**
+```bash
+python scripts/tune_optuna.py \
+    --config config.yaml \
+    --n-trials 40 \
+    --objective-metric macro_recall_f1_mean
+```
+This runs full training per trial using trial-specific YAML configs and stores artifacts under `outputs/optuna_*`.
+
+To stream actual training/evaluation logs from each trial to terminal:
+```bash
+python scripts/tune_optuna.py \
+    --config config.yaml \
+    --n-trials 5 \
+    --objective-metric macro_recall_f1_mean \
+    --verbose-subprocess
+```
+
+Useful options:
+- `--storage sqlite:///outputs/optuna/study.db` (resume-able study DB)
+- `--study-name ham10000_optuna`
+- `--timeout 43200` (12 hours)
+- `--objective-metric macro_recall|macro_f1|weighted_recall|weighted_f1|macro_recall_f1_mean`
+- `--show-progress-bar/--no-show-progress-bar` (trial-level progress bar)
+- `--verbose-subprocess` (show live `train.py` + `evaluate.py` output)
+
+Recommended objective for HAM10000 with imbalance controls: `macro_recall_f1_mean`.
+After tuning, inspect `outputs/optuna_*/optuna_summary.json` and retrain best config at your full epoch budget.
+
 **Key config options:**
 - `model.backbone`: `efficientnet_b0` or `convnext_tiny` (both use `src/train.py`)
 - `model.dropout_rate`: 0.35 (regularization)
