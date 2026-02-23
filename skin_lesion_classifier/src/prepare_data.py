@@ -23,10 +23,12 @@ from __future__ import annotations
 
 import argparse
 import logging
-from collections import Counter
+import math
+import shutil
 from pathlib import Path
 from typing import Dict, Optional, Tuple
 
+import numpy as np
 import pandas as pd
 from PIL import Image
 from tqdm import tqdm
@@ -48,6 +50,241 @@ EXPECTED_CLASSES = {
     "nv": "Melanocytic nevi",
     "vasc": "Vascular lesions",
 }
+
+# Target class distribution requested for balanced training dataset (total: 19,000)
+TARGET_DISTRIBUTION = {
+    "mel": 7000,
+    "nv": 3000,
+    "bcc": 3000,
+    "akiec": 1500,
+    "bkl": 1500,
+    "df": 1500,
+    "vasc": 1500,
+}
+
+
+def _get_image_path(images_dir: Path, image_id: str) -> Optional[Path]:
+    """Resolve an image path by trying common extensions."""
+    for ext in [".jpg", ".jpeg", ".png", ".JPG", ".JPEG", ".PNG"]:
+        candidate = images_dir / f"{image_id}{ext}"
+        if candidate.exists():
+            return candidate
+    return None
+
+
+def _apply_balancing_augmentation(
+    image_bgr: np.ndarray,
+    rng: np.random.Generator,
+    max_rotation_deg: float = 25.0,
+    max_shift_fraction: float = 0.15,
+    max_shear_fraction: float = 0.15,
+    zoom_range: float = 0.4,
+    enable_horizontal_flip: bool = True,
+    enable_vertical_flip: bool = True,
+    brightness_min: float = 0.9,
+    brightness_max: float = 1.5,
+    clahe_clip_limit: float = 4.0,
+) -> np.ndarray:
+    """
+    Apply geometric matrix transforms + pixel-level adjustments.
+
+    Geometric operations:
+    - Rotation up to ±25°
+    - Width/height shift up to ±15%
+    - Shear up to ±15%
+    - Zoom range 0.4 => scale in [0.6, 1.4]
+    - Horizontal/vertical flipping enabled
+    - Fill mode 'nearest' (edge replication)
+
+    Pixel-level operations:
+    - Brightness factor in [0.9, 1.5]
+    - CLAHE with clip limit 4.0
+    """
+    import cv2
+
+    height, width = image_bgr.shape[:2]
+
+    if enable_horizontal_flip and rng.random() < 0.5:
+        image_bgr = cv2.flip(image_bgr, 1)
+    if enable_vertical_flip and rng.random() < 0.5:
+        image_bgr = cv2.flip(image_bgr, 0)
+
+    angle_deg = rng.uniform(-max_rotation_deg, max_rotation_deg)
+    angle_rad = math.radians(angle_deg)
+    tx = rng.uniform(-max_shift_fraction, max_shift_fraction) * width
+    ty = rng.uniform(-max_shift_fraction, max_shift_fraction) * height
+    shear = rng.uniform(-max_shear_fraction, max_shear_fraction)
+    scale = rng.uniform(max(0.1, 1.0 - zoom_range), 1.0 + zoom_range)
+
+    cx = width / 2.0
+    cy = height / 2.0
+
+    c_to_origin = np.array([[1.0, 0.0, -cx], [0.0, 1.0, -cy], [0.0, 0.0, 1.0]])
+    c_back = np.array([[1.0, 0.0, cx], [0.0, 1.0, cy], [0.0, 0.0, 1.0]])
+    rotation = np.array(
+        [
+            [math.cos(angle_rad), -math.sin(angle_rad), 0.0],
+            [math.sin(angle_rad), math.cos(angle_rad), 0.0],
+            [0.0, 0.0, 1.0],
+        ]
+    )
+    shearing = np.array([[1.0, shear, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]])
+    scaling = np.array([[scale, 0.0, 0.0], [0.0, scale, 0.0], [0.0, 0.0, 1.0]])
+    translation = np.array([[1.0, 0.0, tx], [0.0, 1.0, ty], [0.0, 0.0, 1.0]])
+
+    affine_3x3 = translation @ c_back @ rotation @ shearing @ scaling @ c_to_origin
+    affine_2x3 = affine_3x3[:2, :]
+
+    transformed = cv2.warpAffine(
+        image_bgr,
+        affine_2x3.astype(np.float32),
+        (width, height),
+        flags=cv2.INTER_NEAREST,
+        borderMode=cv2.BORDER_REPLICATE,
+    )
+
+    brightness_factor = rng.uniform(brightness_min, brightness_max)
+    transformed = np.clip(transformed.astype(np.float32) * brightness_factor, 0, 255)
+    transformed = transformed.astype(np.uint8)
+
+    lab = cv2.cvtColor(transformed, cv2.COLOR_BGR2LAB)
+    l_channel, a_channel, b_channel = cv2.split(lab)
+    clahe = cv2.createCLAHE(clipLimit=clahe_clip_limit, tileGridSize=(8, 8))
+    l_enhanced = clahe.apply(l_channel)
+    merged = cv2.merge((l_enhanced, a_channel, b_channel))
+    transformed = cv2.cvtColor(merged, cv2.COLOR_LAB2BGR)
+
+    return transformed
+
+
+def build_balanced_augmented_dataset(
+    df: pd.DataFrame,
+    data_dir: Path,
+    output_dir: Path,
+    output_csv: Path,
+    target_distribution: Dict[str, int],
+    seed: int = 42,
+) -> pd.DataFrame:
+    """
+    Build a balanced dataset with augmented samples saved to disk.
+
+    The output contains exactly the requested per-class counts and an
+    aggregate of 19,000 images based on TARGET_DISTRIBUTION.
+    """
+    try:
+        import cv2
+    except ImportError as exc:
+        raise ImportError(
+            "OpenCV is required for balanced augmentation. Install with: "
+            "pip install opencv-python-headless"
+        ) from exc
+
+    images_dir = data_dir / "images"
+    if not images_dir.exists():
+        raise FileNotFoundError(f"Images directory not found: {images_dir}")
+
+    missing_targets = set(target_distribution.keys()) - set(df["label"].unique())
+    if missing_targets:
+        raise ValueError(
+            f"Target classes missing in metadata: {sorted(missing_targets)}"
+        )
+
+    output_images_dir = output_dir / "images"
+    output_images_dir.mkdir(parents=True, exist_ok=True)
+
+    logger.info("Building balanced augmented dataset")
+    logger.info(f"Output directory: {output_dir}")
+
+    rng = np.random.default_rng(seed)
+    records = []
+
+    for label, target_count in target_distribution.items():
+        class_df = df[df["label"] == label].copy().reset_index(drop=True)
+        source_count = len(class_df)
+
+        logger.info(
+            f"Class '{label}': source={source_count}, target={target_count}"
+        )
+
+        if source_count == 0:
+            raise ValueError(f"No samples found for class '{label}'")
+
+        if source_count >= target_count:
+            selected_indices = rng.choice(source_count, size=target_count, replace=False)
+            selected_df = class_df.iloc[selected_indices].reset_index(drop=True)
+
+            for _, row in selected_df.iterrows():
+                src_id = row["image_id"]
+                src_path = _get_image_path(images_dir, src_id)
+                if src_path is None:
+                    continue
+                dst_id = src_id
+                dst_path = output_images_dir / f"{dst_id}.jpg"
+                shutil.copy2(src_path, dst_path)
+
+                out_row = row.copy()
+                out_row["image_id"] = dst_id
+                records.append(out_row)
+
+            continue
+
+        for _, row in class_df.iterrows():
+            src_id = row["image_id"]
+            src_path = _get_image_path(images_dir, src_id)
+            if src_path is None:
+                continue
+            dst_id = src_id
+            dst_path = output_images_dir / f"{dst_id}.jpg"
+            shutil.copy2(src_path, dst_path)
+
+            out_row = row.copy()
+            out_row["image_id"] = dst_id
+            records.append(out_row)
+
+        needed_augmented = target_count - source_count
+        sampled_indices = rng.choice(source_count, size=needed_augmented, replace=True)
+
+        for aug_idx, src_idx in enumerate(
+            tqdm(sampled_indices, desc=f"Augmenting {label}", leave=False)
+        ):
+            row = class_df.iloc[int(src_idx)]
+            src_id = row["image_id"]
+            src_path = _get_image_path(images_dir, src_id)
+            if src_path is None:
+                continue
+
+            src_bgr = cv2.imread(str(src_path), cv2.IMREAD_COLOR)
+            if src_bgr is None:
+                continue
+
+            aug_bgr = _apply_balancing_augmentation(src_bgr, rng=rng)
+            dst_id = f"aug_{label}_{aug_idx:05d}_{src_id}"
+            dst_path = output_images_dir / f"{dst_id}.jpg"
+            cv2.imwrite(str(dst_path), aug_bgr)
+
+            out_row = row.copy()
+            out_row["image_id"] = dst_id
+            records.append(out_row)
+
+    balanced_df = pd.DataFrame(records)
+
+    class_counts = balanced_df["label"].value_counts().to_dict()
+    if class_counts != target_distribution:
+        raise RuntimeError(
+            "Balanced dataset counts do not match target distribution. "
+            f"Actual: {class_counts}, Target: {target_distribution}"
+        )
+
+    balanced_df = balanced_df.sample(frac=1.0, random_state=seed).reset_index(drop=True)
+    output_csv.parent.mkdir(parents=True, exist_ok=True)
+    balanced_df.to_csv(output_csv, index=False)
+
+    logger.info(
+        f"Balanced dataset created with {len(balanced_df)} images at: {output_images_dir}"
+    )
+    logger.info(f"Balanced labels saved to: {output_csv}")
+
+    return balanced_df
 
 
 def validate_image(image_path: Path) -> Tuple[bool, Optional[str]]:
@@ -302,6 +539,33 @@ def main():
         action="store_true",
         help="Skip image validation",
     )
+    parser.add_argument(
+        "--build-balanced-dataset",
+        action="store_true",
+        help=(
+            "Create balanced augmented dataset (total 19,000) with target "
+            "distribution: mel=7000, nv=3000, bcc=3000, akiec=1500, bkl=1500, "
+            "df=1500, vasc=1500"
+        ),
+    )
+    parser.add_argument(
+        "--balanced-output-dir",
+        type=Path,
+        default=None,
+        help="Output directory for balanced dataset (contains images/ and labels CSV)",
+    )
+    parser.add_argument(
+        "--balanced-output-csv",
+        type=Path,
+        default=None,
+        help="Output labels CSV path for balanced dataset",
+    )
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=42,
+        help="Random seed for reproducible balancing/augmentation",
+    )
     args = parser.parse_args()
 
     if args.output is None:
@@ -315,6 +579,29 @@ def main():
     )
 
     print_statistics(df)
+
+    if args.build_balanced_dataset:
+        if args.balanced_output_dir is None:
+            args.balanced_output_dir = args.data_dir / "balanced_19k"
+        if args.balanced_output_csv is None:
+            args.balanced_output_csv = args.balanced_output_dir / "labels.csv"
+
+        balanced_df = build_balanced_augmented_dataset(
+            df=df,
+            data_dir=args.data_dir,
+            output_dir=args.balanced_output_dir,
+            output_csv=args.balanced_output_csv,
+            target_distribution=TARGET_DISTRIBUTION,
+            seed=args.seed,
+        )
+
+        print("\nBalanced dataset statistics:")
+        print_statistics(balanced_df)
+        print(
+            "Use these for training:\n"
+            f"  images_dir: {args.balanced_output_dir / 'images'}\n"
+            f"  labels_csv: {args.balanced_output_csv}"
+        )
 
 
 if __name__ == "__main__":

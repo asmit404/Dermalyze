@@ -40,6 +40,11 @@ pip install -r requirements.txt
 # 3. Prepare data (download HAM10000 dataset first)
 python src/prepare_data.py --data-dir data/HAM10000
 
+# 3b. (Optional) Build class-balanced augmented dataset (19,000 images)
+python src/prepare_data.py \
+    --data-dir data/HAM10000 \
+    --build-balanced-dataset
+
 # 4. Train
 python src/train.py --config config.yaml
 
@@ -102,6 +107,23 @@ data/HAM10000/
 │   └── *.jpg
 └── HAM10000_metadata.csv
 ```
+
+Balanced offline augmentation target (for `--build-balanced-dataset`):
+- `mel`: 7000
+- `nv`: 3000
+- `bcc`: 3000
+- `akiec`: 1500
+- `bkl`: 1500
+- `df`: 1500
+- `vasc`: 1500
+
+Default output:
+- images: `data/HAM10000/balanced_19k/images`
+- labels: `data/HAM10000/balanced_19k/labels.csv`
+
+To train on the balanced dataset, point config values to those paths:
+- `data.images_dir`
+- `data.labels_csv`
 
 ## Training
 
