@@ -6,8 +6,8 @@
 # Data Configuration
 # -----------------------------------------------------------------------------
 data:
-  images_dir: data/HAM10000/images
-  labels_csv: data/HAM10000/labels.csv
+  images_dir: data/HAM10000/balanced_19k/images
+  labels_csv: data/HAM10000/balanced_19k/labels.csv
   split_seed: 42
   val_size: 0.15
   test_size: 0.15
