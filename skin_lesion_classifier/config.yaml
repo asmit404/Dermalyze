@@ -22,6 +22,7 @@ data:
 # Model Configuration
 # -----------------------------------------------------------------------------
 model:
+  backbone: efficientnet_b0
   num_classes: 7
   image_size: 224
   pretrained: true
