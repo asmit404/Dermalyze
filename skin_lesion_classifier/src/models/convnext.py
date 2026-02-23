@@ -69,7 +69,10 @@ class SkinLesionConvNeXtClassifier(nn.Module):
         backbone = models.convnext_tiny(weights=weights)
         feature_dim = 768
 
-        backbone.classifier = nn.Identity()
+        # Keep ConvNeXt pooled features and flatten to [B, 768].
+        # Using Identity here returns [B, 768, 1, 1] in some torchvision versions,
+        # which breaks the first Linear layer of our custom classifier.
+        backbone.classifier = nn.Flatten(1)
 
         return backbone, feature_dim
 
@@ -116,6 +119,9 @@ class SkinLesionConvNeXtClassifier(nn.Module):
             features = self._forward_with_checkpoint(x)
         else:
             features = self.backbone(x)
+
+        if features.ndim > 2:
+            features = torch.flatten(features, 1)
 
         logits = self.classifier(features)
         return logits
