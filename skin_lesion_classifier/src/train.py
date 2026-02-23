@@ -1,8 +1,8 @@
 """
 Training Module for Skin Lesion Classification.
 
-This script provides a complete training pipeline for the EfficientNet-B0
-based skin lesion classifier, including:
+This script provides a complete training pipeline for a configurable
+backbone-based skin lesion classifier (EfficientNet-B0 or ConvNeXt-Tiny), including:
 - Configuration management
 - Data loading and augmentation
 - Model training with mixed precision
@@ -43,7 +43,6 @@ from src.data.dataset import (
     CLASS_LABELS,
     IDX_TO_LABEL,
 )
-from src.models.efficientnet import create_model, get_loss_function
 
 
 # Configure logging
@@ -129,6 +128,26 @@ def load_config(config_path: Path | str) -> Dict[str, Any]:
     with open(config_path, "r") as f:
         config = yaml.safe_load(f)
     return config
+
+
+def resolve_backbone_factories(backbone: str) -> Tuple[Any, Any, str, str]:
+    """Resolve model and loss factories for a configured backbone."""
+    normalized = str(backbone or "efficientnet_b0").strip().lower()
+
+    if normalized in {"efficientnet", "efficientnet_b0", "efficientnet-b0"}:
+        from src.models.efficientnet import create_model, get_loss_function
+
+        return create_model, get_loss_function, "efficientnet_b0", "EfficientNet-B0"
+
+    if normalized in {"convnext", "convnext_tiny", "convnext-tiny"}:
+        from src.models.convnext import create_model, get_loss_function
+
+        return create_model, get_loss_function, "convnext_tiny", "ConvNeXt-Tiny"
+
+    raise ValueError(
+        "Unsupported model.backbone=%r. Supported values: efficientnet_b0, "
+        "convnext_tiny." % backbone
+    )
 
 
 def get_device() -> torch.device:
@@ -760,10 +779,21 @@ def train(
         class_weight_power,
     )
 
-    # Create model
     model_config = config.get("model", {})
+    (
+        create_model,
+        get_loss_function,
+        backbone_key,
+        backbone_display_name,
+    ) = resolve_backbone_factories(model_config.get("backbone", "efficientnet_b0"))
+
+    # Create model
     use_gradient_checkpointing = train_config.get("use_gradient_checkpointing", False)
-    logger.info("Creating model (EfficientNet-B0)...")
+    logger.info(
+        "Creating model (%s | model.backbone=%s)...",
+        backbone_display_name,
+        backbone_key,
+    )
     model = create_model(
         num_classes=model_config.get("num_classes", 7),
         pretrained=model_config.get("pretrained", True),
