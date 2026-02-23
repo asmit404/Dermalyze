@@ -22,6 +22,7 @@ import numpy as np
 import pandas as pd
 import seaborn as sns
 import torch
+import torch.nn as nn
 import torch.nn.functional as F
 from sklearn.calibration import calibration_curve
 from sklearn.metrics import (
@@ -50,6 +51,7 @@ from src.data.dataset import (
     IMAGENET_MEAN,
     IMAGENET_STD,
 )
+from src.models.convnext import SkinLesionConvNeXtClassifier
 from src.models.efficientnet import SkinLesionClassifier
 from src.tta_constants import TTA_AUG_COUNTS
 
@@ -212,7 +214,7 @@ def compute_ensemble_weights_from_metrics(
 def load_model(
     checkpoint_path: Path,
     device: torch.device,
-) -> Tuple[SkinLesionClassifier, Dict[str, Any], Dict[str, float]]:
+) -> Tuple[nn.Module, Dict[str, Any], Dict[str, float]]:
     """
     Load a trained model from checkpoint.
 
@@ -229,14 +231,51 @@ def load_model(
 
     # Create model with config
     model_config = config.get("model", {})
-    model = SkinLesionClassifier(
-        num_classes=model_config.get("num_classes", 7),
-        pretrained=False,  # We're loading weights from checkpoint
-        dropout_rate=model_config.get("dropout_rate", 0.3),
-    )
 
-    # Load state dict
-    model.load_state_dict(checkpoint["model_state_dict"])
+    model_constructors = [
+        (
+            "efficientnet",
+            SkinLesionClassifier,
+        ),
+        (
+            "convnext",
+            SkinLesionConvNeXtClassifier,
+        ),
+    ]
+
+    preferred_backbone = str(model_config.get("backbone", "")).lower()
+    if "convnext" in preferred_backbone:
+        model_constructors = [model_constructors[1], model_constructors[0]]
+
+    model_state = checkpoint["model_state_dict"]
+    model: Optional[nn.Module] = None
+    load_error_messages = []
+
+    for architecture_name, model_class in model_constructors:
+        candidate_model = model_class(
+            num_classes=model_config.get("num_classes", 7),
+            pretrained=False,  # We're loading weights from checkpoint
+            dropout_rate=model_config.get("dropout_rate", 0.3),
+        )
+        try:
+            candidate_model.load_state_dict(model_state)
+            model = candidate_model
+            logger.info(
+                "Loaded checkpoint '%s' using %s architecture",
+                checkpoint_path,
+                architecture_name,
+            )
+            break
+        except RuntimeError as exc:
+            load_error_messages.append(f"{architecture_name}: {exc}")
+
+    if model is None:
+        raise RuntimeError(
+            "Could not load checkpoint with supported architectures "
+            "(efficientnet, convnext).\n"
+            + "\n".join(load_error_messages)
+        )
+
     model = model.to(device)
     model.eval()
 
@@ -245,7 +284,7 @@ def load_model(
 
 @torch.no_grad()
 def get_predictions(
-    model: SkinLesionClassifier,
+    model: nn.Module,
     dataloader: DataLoader,
     device: torch.device,
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -285,7 +324,7 @@ def get_predictions(
 
 @torch.no_grad()
 def get_predictions_with_tta(
-    model: SkinLesionClassifier,
+    model: nn.Module,
     dataloader: DataLoader,
     device: torch.device,
     tta_mode: Literal["light", "medium", "full"] = "medium",
@@ -415,7 +454,7 @@ def get_predictions_with_tta(
 
 @torch.no_grad()
 def get_ensemble_predictions(
-    models: List[SkinLesionClassifier],
+    models: List[nn.Module],
     dataloader: DataLoader,
     device: torch.device,
     weights: Optional[List[float]] = None,
