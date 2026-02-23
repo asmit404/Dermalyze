@@ -117,7 +117,7 @@ python src/train.py --resume outputs/run_xxx/checkpoint_latest.pt
 
 **ConvNeXt variant (same config + training stack):**
 ```bash
-python src/train_conv.py --config config.yaml
+python src/train_conv.py --config config_conv.yaml
 ```
 
 **Ensemble (3 models with different seeds):**
