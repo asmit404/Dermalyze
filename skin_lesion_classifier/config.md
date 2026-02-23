@@ -73,10 +73,20 @@ This document explains all supported parameters in `config.yaml`, including vali
 - **Default:** `224`
 - **Description:** Input resolution used in train/eval transforms.
 
+### `model.backbone`
+- **Type:** string
+- **Default:** `efficientnet_b0`
+- **Valid options:** `efficientnet_b0`, `convnext_tiny`
+- **Description:** Explicit backbone selection metadata for training/evaluation workflows.
+- **Usage:**
+  - `python src/train.py --config ...` expects `efficientnet_b0`
+  - `python src/train_conv.py --config ...` expects `convnext_tiny`
+  - `src/evaluate.py` can load checkpoints from either backbone and mixed ensembles.
+
 ### `model.pretrained`
 - **Type:** bool
 - **Default:** `true`
-- **Description:** Use ImageNet pretrained EfficientNet-B0 backbone.
+- **Description:** Use ImageNet pretrained weights for the selected backbone.
 
 ### `model.dropout_rate`
 - **Type:** float

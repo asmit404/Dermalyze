@@ -31,25 +31,64 @@ Educational skin lesion classification system using EfficientNet-B0 for HAM10000
 ## Quick Start
 
 ```bash
-# 1. Install
+# 1. Install PyTorch (auto-detect CUDA or CPU)
+bash scripts/install_pytorch.sh
+
+# 2. Install remaining dependencies
 pip install -r requirements.txt
 
-# 2. Prepare data (download HAM10000 dataset first)
+# 3. Prepare data (download HAM10000 dataset first)
 python src/prepare_data.py --data-dir data/HAM10000
 
-# 3. Train
+# 4. Train
 python src/train.py --config config.yaml
 
-# 4. Evaluate
+# 5. Evaluate
 python src/evaluate.py \
     --checkpoint outputs/run_xxx/checkpoint_best.pt \
     --test-csv outputs/run_xxx/test_split.csv \
     --images-dir data/HAM10000/images
 
-# 5. Predict
+# 6. Predict
 python src/inference.py \
     --checkpoint outputs/run_xxx/checkpoint_best.pt \
     --image path/to/image.jpg
+```
+
+Windows (PowerShell):
+
+```powershell
+# 1. Install PyTorch (auto-detect CUDA or CPU)
+.\scripts\install_pytorch.ps1
+
+# 2. Install remaining dependencies
+pip install -r requirements.txt
+```
+
+### PyTorch CUDA/CPU Channel Selection
+
+Installers:
+- macOS/Linux: `scripts/install_pytorch.sh`
+- Windows: `scripts/install_pytorch.ps1`
+
+Auto-selection (highest compatible channel):
+- CUDA `>=13.0` → `cu130`
+- CUDA `>=12.8` → `cu128`
+- CUDA `>=12.6` → `cu126`
+- otherwise → `cpu`
+
+Manual override examples:
+
+```bash
+TORCH_CHANNEL=cu130 bash scripts/install_pytorch.sh
+TORCH_CHANNEL=cu128 bash scripts/install_pytorch.sh
+TORCH_CHANNEL=cu126 bash scripts/install_pytorch.sh
+TORCH_CHANNEL=cpu bash scripts/install_pytorch.sh
+```
+
+```powershell
+$env:TORCH_CHANNEL='cu130'  # or cu128 / cu126 / cpu
+.\scripts\install_pytorch.ps1
 ```
 
 ## Dataset
@@ -74,6 +113,11 @@ python src/train.py --config config.yaml
 python src/train.py --resume outputs/run_xxx/checkpoint_latest.pt
 ```
 
+**ConvNeXt variant (same config + training stack):**
+```bash
+python src/train_conv.py --config config.yaml
+```
+
 **Ensemble (3 models with different seeds):**
 ```bash
 python scripts/train_ensemble.py
@@ -95,6 +139,7 @@ Each fold still runs `train -> evaluate -> evaluate_tta` in order, but different
 The CLI shows a live fold-level progress bar while concurrent folds are running.
 
 **Key config options:**
+- `model.backbone`: `efficientnet_b0` (for `src/train.py`) or `convnext_tiny` (for `src/train_conv.py`)
 - `model.dropout_rate`: 0.35 (regularization)
 - `training.batch_size`: 32
 - `training.epochs`: 40
@@ -116,6 +161,7 @@ python src/evaluate.py \
     --test-csv outputs/run_xxx/test_split.csv \
     --images-dir data/HAM10000/images
 ```
+Supports checkpoints trained with either `src/train.py` (EfficientNet) or `src/train_conv.py` (ConvNeXt), including mixed-architecture ensembles.
 
 **Config-first evaluation (recommended):**
 `src/evaluate.py` now reads TTA defaults from `config.yaml` (via `evaluation.tta`) so you don't need to pass TTA flags every run.
