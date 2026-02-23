@@ -77,10 +77,10 @@ This document explains all supported parameters in `config.yaml`, including vali
 - **Type:** string
 - **Default:** `efficientnet_b0`
 - **Valid options:** `efficientnet_b0`, `convnext_tiny`
-- **Description:** Explicit backbone selection metadata for training/evaluation workflows.
+- **Also accepted aliases:** `efficientnet`, `efficientnet-b0`, `convnext`, `convnext-tiny`
+- **Description:** Selects which model backbone `src/train.py` instantiates.
 - **Usage:**
-  - `python src/train.py --config ...` expects `efficientnet_b0`
-  - `python src/train_conv.py --config ...` expects `convnext_tiny`
+  - `python src/train.py --config ...` supports both `efficientnet_b0` and `convnext_tiny`
   - `src/evaluate.py` can load checkpoints from either backbone and mixed ensembles.
 
 ### `model.pretrained`

@@ -115,9 +115,15 @@ python src/train.py --config config.yaml
 python src/train.py --resume outputs/run_xxx/checkpoint_latest.pt
 ```
 
-**ConvNeXt variant (same config + training stack):**
+**ConvNeXt variant (same training entrypoint):**
 ```bash
-python src/train_conv.py --config config_conv.yaml
+python src/train.py --config config_conv.yaml
+```
+
+`config_conv.yaml` should set:
+```yaml
+model:
+    backbone: convnext_tiny
 ```
 
 **Ensemble (3 models with different seeds):**
@@ -141,7 +147,7 @@ Each fold still runs `train -> evaluate -> evaluate_tta` in order, but different
 The CLI shows a live fold-level progress bar while concurrent folds are running.
 
 **Key config options:**
-- `model.backbone`: `efficientnet_b0` (for `src/train.py`) or `convnext_tiny` (for `src/train_conv.py`)
+- `model.backbone`: `efficientnet_b0` or `convnext_tiny` (both use `src/train.py`)
 - `model.dropout_rate`: 0.35 (regularization)
 - `training.batch_size`: 32
 - `training.epochs`: 40
@@ -163,7 +169,7 @@ python src/evaluate.py \
     --test-csv outputs/run_xxx/test_split.csv \
     --images-dir data/HAM10000/images
 ```
-Supports checkpoints trained with either `src/train.py` (EfficientNet) or `src/train_conv.py` (ConvNeXt), including mixed-architecture ensembles.
+Supports checkpoints trained with either backbone (`efficientnet_b0` / `convnext_tiny`) via `src/train.py`, including mixed-architecture ensembles.
 
 **Config-first evaluation (recommended):**
 `src/evaluate.py` now reads TTA defaults from `config.yaml` (via `evaluation.tta`) so you don't need to pass TTA flags every run.
