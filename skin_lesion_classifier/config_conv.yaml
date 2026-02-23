@@ -1,0 +1,115 @@
+# =============================================================================
+# Skin Lesion Classification Configuration (ConvNeXt-Tiny Optimized)
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# Data Configuration
+# -----------------------------------------------------------------------------
+data:
+  images_dir: data/HAM10000/images
+  labels_csv: data/HAM10000/labels.csv
+  split_seed: 42
+  val_size: 0.15
+  test_size: 0.15
+  lesion_aware: true
+  use_stratified_group_kfold: true
+  kfold:
+    n_splits: 5
+    fold_index: 0
+    group_column: lesion_id
+
+# -----------------------------------------------------------------------------
+# Model Configuration
+# -----------------------------------------------------------------------------
+model:
+  backbone: convnext_tiny
+  num_classes: 7
+  image_size: 224
+  pretrained: true
+  dropout_rate: 0.4
+  freeze_backbone: false
+
+# -----------------------------------------------------------------------------
+# Training Configuration
+# -----------------------------------------------------------------------------
+training:
+  seed: 42
+  batch_size: 8
+  epochs: 50
+  lr: 0.00015
+  weight_decay: 0.05
+
+  # Two-Stage Training
+  stage1_epochs: 3
+  stage1_lr: 0.0008
+  stage1_weight_decay: 0.02
+  stage2_epochs: 47
+  stage_epoch_mode: fit_total
+  stage2_lr: 0.00015
+  stage2_weight_decay: 0.05
+
+  # Data Loading
+  num_workers: 4
+  prefetch_factor: 2
+  persistent_workers: true
+  use_weighted_sampling: true
+  sampling_weight_power: 0.4
+  augmentation: medium
+
+  # Performance Optimizations
+  use_amp: true
+  use_gradient_checkpointing: true
+  gradient_accumulation_steps: 4
+
+  # Data Augmentation
+  mixup_alpha: 0.2
+  cutmix_alpha: 0.2
+  mixup_prob: 0.35
+  cutmix_prob: 0.2
+
+  # Learning Rate Scheduler
+  scheduler:
+    type: cosine
+    # warmup_pct: 0.05
+    # Cosine scheduler options (if type: cosine):
+    T_0: 25
+    T_mult: 1
+    eta_min: 0.000005
+
+  # Exponential Moving Average
+  ema:
+    enabled: true
+    decay: 0.9995
+    use_for_eval: true
+    save_best: true
+
+  # Early Stopping
+  early_stopping_patience: 10
+
+# -----------------------------------------------------------------------------
+# Loss Function
+# -----------------------------------------------------------------------------
+loss:
+  type: focal
+  alpha: null
+  gamma: 2.0
+  label_smoothing: 0.03
+  class_weight_power: 0.4
+
+# -----------------------------------------------------------------------------
+# Output Configuration
+# -----------------------------------------------------------------------------
+output:
+  save_epoch_checkpoints: false
+
+# -----------------------------------------------------------------------------
+# Evaluation Configuration
+# -----------------------------------------------------------------------------
+evaluation:
+  tta:
+    use_tta: true
+    mode: medium
+    aggregation: geometric_mean
+    use_clahe_tta: false
+    clahe_clip_limit: 2.0
+    clahe_grid_size: 8
