@@ -511,6 +511,7 @@ def save_checkpoint(
     metrics: Dict[str, float],
     config: Dict[str, Any],
     output_dir: Path,
+    model_factory: Any,
     is_best: bool = False,
     ema: Optional[ModelEMA] = None,
     save_ema_for_best: bool = False,
@@ -535,7 +536,7 @@ def save_checkpoint(
         """Export TorchScript model for inference portability."""
         try:
             model_config = config.get("model", {})
-            export_model = create_model(
+            export_model = model_factory(
                 num_classes=int(model_config.get("num_classes", 7)),
                 pretrained=False,
                 dropout_rate=float(model_config.get("dropout_rate", 0.3)),
@@ -1023,6 +1024,7 @@ def train(
                 },
                 config=config,
                 output_dir=output_dir,
+                model_factory=create_model,
                 is_best=is_best,
                 ema=ema,
                 save_ema_for_best=ema_save_best,
