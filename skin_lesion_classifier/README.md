@@ -65,7 +65,7 @@ Windows (PowerShell):
 pip install -r requirements.txt
 ```
 
-### PyTorch CUDA/CPU Channel Selection
+### PyTorch CUDA/ROCm/CPU Channel Selection
 
 Installers:
 - macOS/Linux: `scripts/install_pytorch.sh`
@@ -75,6 +75,7 @@ Auto-selection (highest compatible channel):
 - CUDA `>=13.0` → `cu130`
 - CUDA `>=12.8` → `cu128`
 - CUDA `>=12.6` → `cu126`
+- ROCm `>=7.1` → `rocm7.1` (Linux Bash installer)
 - otherwise → `cpu`
 
 Manual override examples:
@@ -83,6 +84,7 @@ Manual override examples:
 TORCH_CHANNEL=cu130 bash scripts/install_pytorch.sh
 TORCH_CHANNEL=cu128 bash scripts/install_pytorch.sh
 TORCH_CHANNEL=cu126 bash scripts/install_pytorch.sh
+TORCH_CHANNEL=rocm7.1 bash scripts/install_pytorch.sh
 TORCH_CHANNEL=cpu bash scripts/install_pytorch.sh
 ```
 
