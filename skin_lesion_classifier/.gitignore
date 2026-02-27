@@ -1,5 +1,7 @@
 # Data
 data/HAM10000
+data/isic2018val
+data/braaff-bald
 
 # Outputs and checkpoints
 evaluation_results/

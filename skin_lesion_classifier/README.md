@@ -40,6 +40,16 @@ pip install -r requirements.txt
 # 3. Prepare data (download HAM10000 dataset first)
 python src/prepare_data.py --data-dir data/HAM10000
 
+# 3a. Prepare ISIC-style metadata datasets (isic_id + diagnosis_3)
+python src/prepare_data.py \
+    --data-dir data/isic2018 \
+    --use-default-isic-mapping
+
+# Optional: provide your own JSON mapping for diagnosis labels -> HAM classes
+python src/prepare_data.py \
+    --data-dir data/dataset \
+    --label-mapping-file path/to/label_mapping.json
+
 # 3b. (Optional) Build class-balanced augmented dataset (19,000 images)
 python src/prepare_data.py \
     --data-dir data/HAM10000 \
@@ -124,6 +134,11 @@ Default output:
 To train on the balanced dataset, point config values to those paths:
 - `data.images_dir`
 - `data.labels_csv`
+
+ISIC-style metadata support:
+- `src/prepare_data.py` now accepts `isic_id` as image identifier and `diagnosis_3` as label source.
+- Use `--use-default-isic-mapping` to map common ISIC diagnosis names into HAM10000 classes (`akiec`, `bcc`, `bkl`, `df`, `mel`, `nv`, `vasc`).
+- Use `--label-mapping-file your_mapping.json` to override or extend mappings with a JSON dictionary of `{ "raw_label": "ham_class" }`.
 
 ## Training
 
