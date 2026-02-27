@@ -612,8 +612,13 @@ def train(
     Main training function.
 
     Args:
-        config: Configuration dictionary
-        output_dir: Directory to save outputs
+    project_root = Path(__file__).resolve().parent.parent
+    labels_csv = Path(data_config.get("labels_csv", "data/HAM10000/labels.csv"))
+    images_dir = Path(data_config.get("images_dir", "data/HAM10000/images"))
+    if not labels_csv.is_absolute():
+        labels_csv = (project_root / labels_csv).resolve()
+    if not images_dir.is_absolute():
+        images_dir = (project_root / images_dir).resolve()
         resume_from: Path to checkpoint to resume from
     """
     # Set random seed (training)
@@ -1133,13 +1138,26 @@ def main() -> None:
     )
     args = parser.parse_args()
 
+    project_root = Path(__file__).resolve().parent.parent
+
+    def _resolve_project_path(path_value: Optional[Path]) -> Optional[Path]:
+        if path_value is None:
+            return None
+        if path_value.is_absolute():
+            return path_value
+        return (project_root / path_value).resolve()
+
+    args.config = _resolve_project_path(args.config)
+    args.output = _resolve_project_path(args.output)
+    args.resume = _resolve_project_path(args.resume)
+
     # Load configuration
     config = load_config(args.config)
 
     # Set up output directory
     if args.output is None:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        output_dir = Path("outputs") / f"run_{timestamp}"
+        output_dir = (project_root / "outputs" / f"run_{timestamp}").resolve()
     else:
         output_dir = args.output
 

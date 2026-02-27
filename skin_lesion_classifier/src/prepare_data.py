@@ -22,6 +22,7 @@ data/HAM10000/
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import math
 import shutil
@@ -51,6 +52,38 @@ EXPECTED_CLASSES = {
     "vasc": "Vascular lesions",
 }
 
+# Default mapping for common ISIC diagnosis_3 labels to HAM10000 classes.
+# This can be extended/overridden via --label-mapping-file.
+DEFAULT_ISIC_DIAGNOSIS3_MAPPING = {
+    "Actinic keratosis": "akiec",
+    "Bowen disease": "akiec",
+    "Bowen's disease": "akiec",
+    "Squamous cell carcinoma in situ": "akiec",
+    "Basal cell carcinoma": "bcc",
+    "Benign keratosis": "bkl",
+    "Pigmented benign keratosis": "bkl",
+    "Lichen planus-like keratosis": "bkl",
+    "Seborrheic keratosis": "bkl",
+    "Solar lentigo": "bkl",
+    "Dermatofibroma": "df",
+    "Melanoma": "mel",
+    "Melanoma, NOS": "mel",
+    "Melanoma In Situ": "mel",
+    "Melanoma in situ": "mel",
+    "Melanoma Invasive": "mel",
+    "Nevus": "nv",
+    "Blue nevus": "nv",
+    "Clark nevus": "nv",
+    "Congenital nevus": "nv",
+    "Dermal nevus": "nv",
+    "Reed or Spitz nevus": "nv",
+    "Squamous cell carcinoma, NOS": "akiec",
+    "Vascular lesion": "vasc",
+    "Benign soft tissue proliferations - Vascular": "vasc",
+    "Angioma": "vasc",
+    "Hemangioma": "vasc",
+}
+
 # Target class distribution requested for balanced training dataset (total: 19,000)
 TARGET_DISTRIBUTION = {
     "mel": 7000,
@@ -70,6 +103,47 @@ def _get_image_path(images_dir: Path, image_id: str) -> Optional[Path]:
         if candidate.exists():
             return candidate
     return None
+
+
+def load_label_mapping(
+    label_mapping_file: Optional[Path],
+    include_default_isic_mapping: bool,
+) -> Dict[str, str]:
+    """Load and validate label mapping from defaults and/or JSON file."""
+    mapping: Dict[str, str] = {}
+
+    if include_default_isic_mapping:
+        mapping.update(DEFAULT_ISIC_DIAGNOSIS3_MAPPING)
+
+    if label_mapping_file is not None:
+        if not label_mapping_file.exists():
+            raise FileNotFoundError(f"Label mapping file not found: {label_mapping_file}")
+
+        if label_mapping_file.suffix.lower() != ".json":
+            raise ValueError(
+                "Label mapping file must be JSON (.json) with "
+                "{\"raw_label\": \"target_label\"} entries"
+            )
+
+        with open(label_mapping_file, "r", encoding="utf-8") as f:
+            user_mapping = json.load(f)
+
+        if not isinstance(user_mapping, dict):
+            raise ValueError("Label mapping JSON must be an object/dictionary")
+
+        for key, value in user_mapping.items():
+            if not isinstance(key, str) or not isinstance(value, str):
+                raise ValueError("Label mapping keys/values must be strings")
+            mapping[key.strip()] = value.strip()
+
+    invalid_targets = sorted({v for v in mapping.values() if v not in EXPECTED_CLASSES})
+    if invalid_targets:
+        raise ValueError(
+            "Label mapping contains targets outside expected classes: "
+            f"{invalid_targets}. Expected one of: {sorted(EXPECTED_CLASSES.keys())}"
+        )
+
+    return mapping
 
 
 def _apply_balancing_augmentation(
@@ -315,6 +389,7 @@ def prepare_dataset(
     output_csv: Path,
     metadata_file: Optional[Path] = None,
     validate_images: bool = True,
+    label_mapping: Optional[Dict[str, str]] = None,
 ) -> pd.DataFrame:
     """
     Prepare the HAM10000 dataset for training.
@@ -382,6 +457,7 @@ def prepare_dataset(
         # Map columns to expected format
         column_mapping = {
             "image_id": "image_id",
+            "isic_id": "image_id",
             "image": "image_id",
             "dx": "label",
             "diagnosis": "label",
@@ -392,6 +468,20 @@ def prepare_dataset(
         for old_name, new_name in column_mapping.items():
             if old_name in metadata.columns and old_name != new_name:
                 metadata = metadata.rename(columns={old_name: new_name})
+
+        if "label" not in metadata.columns:
+            if "diagnosis_3" in metadata.columns:
+                metadata["label"] = metadata["diagnosis_3"]
+            elif "diagnosis_2" in metadata.columns:
+                metadata["label"] = metadata["diagnosis_2"]
+            elif "diagnosis_1" in metadata.columns:
+                metadata["label"] = metadata["diagnosis_1"]
+
+        if "label" in metadata.columns:
+            if "diagnosis_2" in metadata.columns:
+                metadata["label"] = metadata["label"].fillna(metadata["diagnosis_2"])
+            if "diagnosis_1" in metadata.columns:
+                metadata["label"] = metadata["label"].fillna(metadata["diagnosis_1"])
 
         # Validate required columns
         if "image_id" not in metadata.columns or "label" not in metadata.columns:
@@ -406,6 +496,27 @@ def prepare_dataset(
             columns_to_keep.append("lesion_id")
 
         df = metadata[columns_to_keep].copy()
+
+        if label_mapping:
+            mapping_normalized = {k.strip(): v.strip() for k, v in label_mapping.items()}
+            mapping_casefold = {k.casefold(): v for k, v in mapping_normalized.items()}
+
+            def _map_label(value: object) -> str:
+                if pd.isna(value):
+                    return "unknown"
+                raw = str(value).strip()
+                if raw in mapping_normalized:
+                    return mapping_normalized[raw]
+                return mapping_casefold.get(raw.casefold(), raw)
+
+            before_unique = df["label"].nunique(dropna=False)
+            df["label"] = df["label"].apply(_map_label)
+            after_unique = df["label"].nunique(dropna=False)
+            logger.info(
+                "Applied label mapping: %d unique labels -> %d unique labels",
+                before_unique,
+                after_unique,
+            )
 
         logger.info(f"Loaded metadata for {len(df)} images")
 
@@ -535,6 +646,23 @@ def main():
         help="Path to original metadata file",
     )
     parser.add_argument(
+        "--label-mapping-file",
+        type=Path,
+        default=None,
+        help=(
+            "Optional JSON file mapping raw metadata labels to HAM classes "
+            "(e.g., diagnosis_3 values to akiec/bcc/bkl/df/mel/nv/vasc)"
+        ),
+    )
+    parser.add_argument(
+        "--use-default-isic-mapping",
+        action="store_true",
+        help=(
+            "Apply built-in mapping from common ISIC diagnosis_3 labels to "
+            "HAM10000 classes"
+        ),
+    )
+    parser.add_argument(
         "--skip-validation",
         action="store_true",
         help="Skip image validation",
@@ -568,14 +696,36 @@ def main():
     )
     args = parser.parse_args()
 
+    project_root = Path(__file__).resolve().parent.parent
+
+    def _resolve_project_path(path_value: Optional[Path]) -> Optional[Path]:
+        if path_value is None:
+            return None
+        if path_value.is_absolute():
+            return path_value
+        return (project_root / path_value).resolve()
+
+    args.data_dir = _resolve_project_path(args.data_dir)
+    args.output = _resolve_project_path(args.output)
+    args.metadata = _resolve_project_path(args.metadata)
+    args.label_mapping_file = _resolve_project_path(args.label_mapping_file)
+    args.balanced_output_dir = _resolve_project_path(args.balanced_output_dir)
+    args.balanced_output_csv = _resolve_project_path(args.balanced_output_csv)
+
     if args.output is None:
         args.output = args.data_dir / "labels.csv"
+
+    label_mapping = load_label_mapping(
+        label_mapping_file=args.label_mapping_file,
+        include_default_isic_mapping=args.use_default_isic_mapping,
+    )
 
     df = prepare_dataset(
         data_dir=args.data_dir,
         output_csv=args.output,
         metadata_file=args.metadata,
         validate_images=not args.skip_validation,
+        label_mapping=label_mapping,
     )
 
     print_statistics(df)
