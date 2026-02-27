@@ -640,12 +640,18 @@ def compute_metrics(
     Returns:
         Dictionary of metrics
     """
+    all_label_indices = list(range(len(class_names)))
+
     # Overall accuracy
     accuracy = accuracy_score(y_true, y_pred)
 
     # Per-class metrics
     precision, recall, f1, support = precision_recall_fscore_support(
-        y_true, y_pred, average=None, zero_division=0
+        y_true,
+        y_pred,
+        labels=all_label_indices,
+        average=None,
+        zero_division=0,
     )
 
     # Macro-averaged metrics
@@ -670,11 +676,16 @@ def compute_metrics(
         per_class_auc = [None] * len(class_names)
 
     # Confusion matrix
-    cm = confusion_matrix(y_true, y_pred)
+    cm = confusion_matrix(y_true, y_pred, labels=all_label_indices)
 
     # Classification report
     report = classification_report(
-        y_true, y_pred, target_names=class_names, output_dict=True, zero_division=0
+        y_true,
+        y_pred,
+        labels=all_label_indices,
+        target_names=class_names,
+        output_dict=True,
+        zero_division=0,
     )
 
     # Per-class metrics dictionary
@@ -1294,6 +1305,19 @@ def main() -> None:
         help="How to aggregate ensemble predictions",
     )
     args = parser.parse_args()
+
+    project_root = Path(__file__).resolve().parent.parent
+
+    def _resolve_project_path(path_value: Path) -> Path:
+        if path_value.is_absolute():
+            return path_value
+        return (project_root / path_value).resolve()
+
+    args.config = _resolve_project_path(args.config)
+    args.checkpoint = [_resolve_project_path(cp) for cp in args.checkpoint]
+    args.test_csv = _resolve_project_path(args.test_csv)
+    args.images_dir = _resolve_project_path(args.images_dir)
+    args.output = _resolve_project_path(args.output)
 
     config_defaults: Dict[str, Any] = {}
     if args.config is not None and args.config.exists():
