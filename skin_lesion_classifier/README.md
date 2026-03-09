@@ -70,6 +70,37 @@ python src/inference.py \
     --image path/to/image.jpg
 ```
 
+## Frontend API Integration
+
+You can serve this classifier behind a FastAPI endpoint compatible with the Dermalyze frontend.
+
+Run from `skin_lesion_classifier/`:
+
+```bash
+pip install -r requirements.txt
+uvicorn src.api_server:app --reload --host 0.0.0.0 --port 8000
+```
+
+Set your frontend env (`frontend/.env.local`):
+
+```env
+VITE_API_URL=http://localhost:8000
+```
+
+Optional API environment variables:
+
+- `MODEL_CHECKPOINT` (default: `outputs/run_best_yet/checkpoint_best.pt`)
+- `MODEL_IMAGE_SIZE` (default: `224`)
+- `USE_TTA` (`true`/`false`, default: `false`)
+- `TTA_MODE` (`light` | `medium` | `full`, default: `medium`)
+- `TTA_AGGREGATION` (`mean` | `geometric_mean` | `max`, default: `geometric_mean`)
+- `CORS_ORIGINS` (comma-separated frontend origins)
+
+API endpoint:
+
+- `POST /classify` with `multipart/form-data` field `file`
+- Response shape: `{ "classes": [{ "id": "mel", "name": "Melanoma", "score": 67.4 }, ...] }`
+
 Windows (PowerShell):
 
 ```powershell
