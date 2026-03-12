@@ -99,6 +99,7 @@ const ResultsScreen: React.FC<ResultsScreenProps> = ({
         if (!user) return;
 
         // Upload image to Supabase Storage
+        // Store the path (not a public URL) so signed URLs can be generated at display time
         let image_url: string | null = null;
         if (image) {
           const blob = await (await fetch(image)).blob();
@@ -108,9 +109,7 @@ const ResultsScreen: React.FC<ResultsScreenProps> = ({
             .from('analysis-images')
             .upload(path, blob, { contentType: blob.type });
           if (!uploadErr) {
-            image_url = supabase.storage
-              .from('analysis-images')
-              .getPublicUrl(path).data.publicUrl;
+            image_url = path; // store path; HistoryScreen generates signed URLs on fetch
           }
         }
 

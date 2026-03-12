@@ -112,7 +112,7 @@ def _to_frontend_response(probabilities: Dict[str, float]) -> List[ClassResult]:
 def health() -> dict:
     return {
         "status": "ok",
-        "model_checkpoint": str(CHECKPOINT_PATH),
+        "model_loaded": _predictor is not None,
         "use_tta": USE_TTA,
     }
 

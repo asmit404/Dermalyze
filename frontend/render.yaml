@@ -5,17 +5,17 @@ services:
   - type: web
     name: dermalyze-api
     runtime: python
-    rootDir: backend
+    rootDir: inference_service
     buildCommand: pip install -r requirements.txt
-    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    startCommand: uvicorn app:app --host 0.0.0.0 --port $PORT
     envVars:
       - key: CORS_ORIGINS
-        sync: false          # set this manually in the Render dashboard
-      - key: MODEL_PATH
-        value: ./model.pt    # place model.pt in the backend/ directory
-      - key: USE_JIT
-        value: "true"        # set to "false" if using raw state-dict checkpoint
+        sync: false          # set to your production frontend URL, e.g. https://dermalyze.onrender.com
+      - key: MODEL_CHECKPOINT
+        value: /data/models/checkpoint_best.pt
+      - key: USE_TTA
+        value: "false"       # set to "true" to enable test-time augmentation (slower)
     disk:
       name: model-storage
-      mountPath: /opt/render/project/src/backend
-      sizeGB: 1
+      mountPath: /data/models
+      sizeGB: 2

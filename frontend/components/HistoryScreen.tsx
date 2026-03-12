@@ -22,21 +22,46 @@ const HistoryScreen: React.FC<HistoryScreenProps> = ({ onBack, onViewDetails }) 
   const [hasMore,       setHasMore]       = useState(false);
   const [page,          setPage]          = useState(0);
 
-  const mapRows = (data: Record<string, unknown>[]): AnalysisHistoryItem[] =>
-    data.map((row) => ({
-      id:         row.id as string,
-      date:       new Date(row.created_at as string).toLocaleDateString('en-US', {
-                    year: 'numeric', month: 'short', day: 'numeric',
-                  }),
-      time:       new Date(row.created_at as string).toLocaleTimeString('en-US', {
-                    hour: '2-digit', minute: '2-digit',
-                  }),
-      classId:    row.predicted_class_id as string,
-      className:  row.predicted_class_name as string,
-      confidence: row.confidence as number,
-      imageUrl:   (row.image_url as string | null) ?? undefined,
-      allScores:  (row.all_scores as AnalysisHistoryItem['allScores']) ?? undefined,
-    }));
+  const mapRows = async (data: Record<string, unknown>[]): Promise<AnalysisHistoryItem[]> => {
+    // Generate signed URLs in one batched request for rows that have an image path stored
+    const paths = data
+      .map((row) => row.image_url as string | null)
+      .filter((p): p is string => !!p && !p.startsWith('http'));
+
+    let signedUrlMap: Record<string, string> = {};
+    if (paths.length > 0) {
+      const { data: signed } = await supabase.storage
+        .from('analysis-images')
+        .createSignedUrls(paths, 60 * 60 * 24); // 24-hour TTL
+      if (signed) {
+        for (const entry of signed) {
+          if (entry.signedUrl) signedUrlMap[entry.path] = entry.signedUrl;
+        }
+      }
+    }
+
+    return data.map((row) => {
+      const rawUrl = row.image_url as string | null;
+      // Support legacy rows that stored full URLs directly
+      const imageUrl = rawUrl
+        ? (rawUrl.startsWith('http') ? rawUrl : (signedUrlMap[rawUrl] ?? undefined))
+        : undefined;
+      return {
+        id:         row.id as string,
+        date:       new Date(row.created_at as string).toLocaleDateString('en-US', {
+                      year: 'numeric', month: 'short', day: 'numeric',
+                    }),
+        time:       new Date(row.created_at as string).toLocaleTimeString('en-US', {
+                      hour: '2-digit', minute: '2-digit',
+                    }),
+        classId:    row.predicted_class_id as string,
+        className:  row.predicted_class_name as string,
+        confidence: row.confidence as number,
+        imageUrl,
+        allScores:  (row.all_scores as AnalysisHistoryItem['allScores']) ?? undefined,
+      };
+    });
+  };
 
   // Initial load
   useEffect(() => {
@@ -50,7 +75,7 @@ const HistoryScreen: React.FC<HistoryScreenProps> = ({ onBack, onViewDetails }) 
 
         if (error) throw error;
         const rows = data ?? [];
-        setHistoryItems(mapRows(rows));
+        setHistoryItems(await mapRows(rows));
         setHasMore(rows.length === PAGE_SIZE);
       } catch {
         setHistoryError('Could not load analysis history. Please try again.');
@@ -73,7 +98,7 @@ const HistoryScreen: React.FC<HistoryScreenProps> = ({ onBack, onViewDetails }) 
 
       if (error) throw error;
       const rows = data ?? [];
-      setHistoryItems((prev) => [...prev, ...mapRows(rows)]);
+      setHistoryItems((prev) => [...prev, ...(await mapRows(rows))]);
       setHasMore(rows.length === PAGE_SIZE);
       setPage(nextPage);
     } catch {
