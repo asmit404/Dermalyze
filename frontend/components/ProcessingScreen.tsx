@@ -1,12 +1,12 @@
 
 import React, { useEffect, useRef, useState } from 'react';
-import { classifyImage } from '../lib/api';
+import { classifyImage, ApiError } from '../lib/api';
 import type { ClassResult } from '../lib/types';
 
 interface ProcessingScreenProps {
   image: string | null;
   onComplete: (results: ClassResult[]) => void;
-  onError: (message?: string) => void;
+  onError: (message?: string, retryable?: boolean) => void;
 }
 
 const ProcessingScreen: React.FC<ProcessingScreenProps> = ({
@@ -14,7 +14,7 @@ const ProcessingScreen: React.FC<ProcessingScreenProps> = ({
   onComplete,
   onError,
 }) => {
-  const [statusText, setStatusText] = useState('Preprocessing image…');
+  const [statusText, setStatusText] = useState('Validating image type…');
   const calledRef = useRef(false); // prevent double-invoke in React StrictMode
 
   useEffect(() => {
@@ -28,7 +28,7 @@ const ProcessingScreen: React.FC<ProcessingScreenProps> = ({
 
     const run = async () => {
       try {
-        setStatusText('Preprocessing image…');
+        setStatusText('Validating image type…');
         await new Promise((r) => setTimeout(r, 400));
 
         setStatusText('Running model inference…');
@@ -43,7 +43,8 @@ const ProcessingScreen: React.FC<ProcessingScreenProps> = ({
           err instanceof Error
             ? err.message
             : 'An unexpected error occurred during classification.';
-        onError(msg);
+        const retryable = err instanceof ApiError && err.status === 503;
+        onError(msg, retryable);
       }
     };
 

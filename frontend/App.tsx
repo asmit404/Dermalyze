@@ -70,6 +70,7 @@ const App: React.FC = () => {
   const [selectedImage,       setSelectedImage]       = useState<string | null>(null);
   const [analysisResults,     setAnalysisResults]     = useState<ClassResult[] | null>(null);
   const [analysisError,       setAnalysisError]       = useState<string | null>(null);
+  const [analysisRetryable,   setAnalysisRetryable]   = useState(false);
   const [selectedHistoryItem, setSelectedHistoryItem] = useState<AnalysisHistoryItem | null>(null);
   const [showLogoutConfirm,   setShowLogoutConfirm]   = useState(false);
   const [prevPath,            setPrevPath]            = useState<string | null>(null);
@@ -137,6 +138,7 @@ const App: React.FC = () => {
     setSelectedImage(null);
     setAnalysisResults(null);
     setAnalysisError(null);
+    setAnalysisRetryable(false);
     navigate(ROUTES.upload);
   };
 
@@ -212,7 +214,7 @@ const App: React.FC = () => {
                 <ProcessingScreen
                   image={selectedImage}
                   onComplete={(results) => { setAnalysisResults(results); navigate(ROUTES.results); }}
-                  onError={(msg) => { setAnalysisError(msg ?? null); navigate(ROUTES.error); }}
+                  onError={(msg, retryable) => { setAnalysisError(msg ?? null); setAnalysisRetryable(retryable ?? false); navigate(ROUTES.error); }}
                 />
               </AppLayout>
             } />
@@ -246,6 +248,7 @@ const App: React.FC = () => {
               <AppLayout onLogout={handleRequestLogout}>
                 <ErrorScreen
                   onBackToUpload={resetAnalysis}
+                  onRetry={analysisRetryable && selectedImage ? () => { setAnalysisError(null); setAnalysisRetryable(false); navigate(ROUTES.processing); } : undefined}
                   message={analysisError ?? undefined}
                 />
               </AppLayout>

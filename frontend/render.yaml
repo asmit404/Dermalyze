@@ -15,6 +15,8 @@ services:
         value: /data/models/checkpoint_best.pt
       - key: USE_TTA
         value: "false"       # set to "true" to enable test-time augmentation (slower)
+      - key: GEMINI_API_KEY
+        sync: false          # set in the Render dashboard — enables dermatoscopic image validation
     disk:
       name: model-storage
       mountPath: /data/models

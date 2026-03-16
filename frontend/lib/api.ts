@@ -1,5 +1,14 @@
 import type { ClassResult } from './types';
 
+export class ApiError extends Error {
+  status: number;
+  constructor(message: string, status: number) {
+    super(message);
+    this.name = 'ApiError';
+    this.status = status;
+  }
+}
+
 interface ClassifyResponse {
   classes: ClassResult[];
 }
@@ -46,7 +55,7 @@ export const classifyImage = async (imageDataUrl: string): Promise<ClassResult[]
       json && typeof json === 'object' && 'detail' in json && typeof json.detail === 'string'
         ? json.detail
         : `Classification failed with status ${response.status}.`;
-    throw new Error(detail);
+    throw new ApiError(detail, response.status);
   }
 
   const parsed = assertValidResponse(json);
