@@ -6,7 +6,6 @@ interface Props {
 
 interface State {
   hasError: boolean;
-  message: string;
 }
 
 /**
@@ -16,15 +15,16 @@ interface State {
 class ErrorBoundary extends React.Component<Props, State> {
   constructor(props: Props) {
     super(props);
-    this.state = { hasError: false, message: '' };
+    this.state = { hasError: false };
   }
 
-  static getDerivedStateFromError(error: Error): State {
-    return { hasError: true, message: error.message };
+  static getDerivedStateFromError(): State {
+    return { hasError: true };
   }
 
-  componentDidCatch(error: Error, info: React.ErrorInfo) {
-    console.error('[ErrorBoundary]', error, info.componentStack);
+  componentDidCatch(_error: Error, _info: React.ErrorInfo) {
+    // Errors are intentionally not logged here to avoid leaking internals.
+    // Wire up an error reporting service (e.g. Sentry) if monitoring is needed.
   }
 
   handleReload = () => {
@@ -45,12 +45,7 @@ class ErrorBoundary extends React.Component<Props, State> {
           <h1 className="text-2xl font-bold text-slate-900 mb-2 tracking-tight">
             Something went wrong
           </h1>
-          <p className="text-sm text-slate-500 mb-1">An unexpected error occurred in the application.</p>
-          {this.state.message && (
-            <p className="text-xs text-slate-400 font-mono bg-slate-50 rounded-lg px-3 py-2 mb-6 break-all">
-              {this.state.message}
-            </p>
-          )}
+          <p className="text-sm text-slate-500 mb-6">An unexpected error occurred in the application.</p>
           <button
             onClick={this.handleReload}
             className="w-full py-3 bg-teal-600 hover:bg-teal-700 text-white text-sm font-bold rounded-full transition-colors"

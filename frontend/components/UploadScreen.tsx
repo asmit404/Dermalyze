@@ -1,12 +1,12 @@
 
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import Button from './ui/Button';
 
 const MAX_FILE_BYTES = 10 * 1024 * 1024; // 10 MB
 const MAX_DIMENSION_PX = 448;            // resize longest edge to ≤ 448 px
 const JPEG_QUALITY = 0.85;
 
-/** Compress a data-URL image using canvas, returns a JPEG data-URL. */
+/** Compress/resize a data-URL image using canvas. PNGs are kept lossless; others use JPEG. */
 function compressImage(dataUrl: string): Promise<string> {
   return new Promise((resolve, reject) => {
     const img = new Image();
@@ -18,7 +18,8 @@ function compressImage(dataUrl: string): Promise<string> {
       const ctx = canvas.getContext('2d');
       if (!ctx) { resolve(dataUrl); return; }
       ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-      resolve(canvas.toDataURL('image/jpeg', JPEG_QUALITY));
+      const isPng = dataUrl.startsWith('data:image/png');
+      resolve(isPng ? canvas.toDataURL('image/png') : canvas.toDataURL('image/jpeg', JPEG_QUALITY));
     };
     img.onerror = () => reject(new Error('Failed to load image for compression.'));
     img.src = dataUrl;
@@ -42,6 +43,9 @@ const UploadScreen: React.FC<UploadScreenProps> = ({
 }) => {
   const [isDragging, setIsDragging] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Always start with a clean slate — clear any image left over from a previous session
+  useEffect(() => { onImageSelect(null); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const validateAndProcessFile = (file: File) => {
     const validTypes = ['image/jpeg', 'image/png'];

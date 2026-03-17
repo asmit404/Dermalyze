@@ -75,21 +75,21 @@ const DashboardScreen: React.FC<DashboardScreenProps> = ({
   useEffect(() => {
     const load = async () => {
       try {
+        const { data: { user } } = await supabase.auth.getUser();
+        if (user) setUserName(user.user_metadata?.full_name?.split(' ')[0] ?? '');
+
         const [
-          { data: { user } },
           { data: rpcData,  error: rpcErr },
           { data: lastRows, error: lastErr },
         ] = await Promise.all([
-          supabase.auth.getUser(),
           supabase.rpc('get_dashboard_stats'),
           supabase
             .from('analyses')
             .select('predicted_class_id, predicted_class_name, confidence, created_at, image_url')
+            .eq('user_id', user?.id ?? '')
             .order('created_at', { ascending: false })
             .limit(1),
         ]);
-
-        if (user) setUserName(user.user_metadata?.full_name?.split(' ')[0] ?? '');
 
         if (rpcErr || !rpcData) { setFetchErr(true); setLoading(false); return; }
 
@@ -100,7 +100,7 @@ const DashboardScreen: React.FC<DashboardScreenProps> = ({
         if (resolvedImageUrl && !resolvedImageUrl.startsWith('http')) {
           const { data: signed } = await supabase.storage
             .from('analysis-images')
-            .createSignedUrl(resolvedImageUrl, 60 * 60 * 24);
+            .createSignedUrl(resolvedImageUrl, 60 * 60); // 1-hour expiry
           resolvedImageUrl = signed?.signedUrl ?? null;
         }
 

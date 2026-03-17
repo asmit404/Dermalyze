@@ -17,6 +17,7 @@ const ProfileScreen: React.FC<ProfileScreenProps> = ({ onBack }) => {
   const [profileMsg, setProfileMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
   // ── Change password state ───────────────────────────────────────────────────
+  const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [confirmNewPassword, setConfirmNewPassword] = useState('');
   const [passwordLoading, setPasswordLoading] = useState(false);
@@ -70,8 +71,12 @@ const ProfileScreen: React.FC<ProfileScreenProps> = ({ onBack }) => {
     e.preventDefault();
     setPasswordMsg(null);
 
-    if (newPassword.length < 6) {
-      setPasswordMsg({ type: 'error', text: 'Password must be at least 6 characters.' });
+    if (!currentPassword) {
+      setPasswordMsg({ type: 'error', text: 'Please enter your current password.' });
+      return;
+    }
+    if (newPassword.length < 12) {
+      setPasswordMsg({ type: 'error', text: 'New password must be at least 12 characters.' });
       return;
     }
     if (newPassword !== confirmNewPassword) {
@@ -81,8 +86,20 @@ const ProfileScreen: React.FC<ProfileScreenProps> = ({ onBack }) => {
 
     setPasswordLoading(true);
     try {
+      // Verify current password before allowing the change
+      const { error: verifyError } = await supabase.auth.signInWithPassword({
+        email,
+        password: currentPassword,
+      });
+      if (verifyError) {
+        setPasswordMsg({ type: 'error', text: 'Current password is incorrect.' });
+        setPasswordLoading(false);
+        return;
+      }
+
       const { error } = await supabase.auth.updateUser({ password: newPassword });
       if (error) throw error;
+      setCurrentPassword('');
       setNewPassword('');
       setConfirmNewPassword('');
       setPasswordMsg({ type: 'success', text: 'Password changed successfully.' });
@@ -257,10 +274,18 @@ const ProfileScreen: React.FC<ProfileScreenProps> = ({ onBack }) => {
         {/* ── Section 2: Change Password ── */}
         <section className="bg-white rounded-3xl border border-slate-200 p-6 sm:p-8 shadow-sm">
           <h2 className="text-lg font-bold text-slate-900 mb-1">Change Password</h2>
-          <p className="text-sm text-slate-500 mb-6">Update your account password. Must be at least 6 characters.</p>
+          <p className="text-sm text-slate-500 mb-6">Update your account password. New password must be at least 12 characters.</p>
 
           <form onSubmit={handleChangePassword} className="space-y-1">
             <FeedbackBanner msg={passwordMsg} />
+            <Input
+              label="Current Password"
+              type="password"
+              placeholder="••••••••"
+              value={currentPassword}
+              onChange={(e) => setCurrentPassword(e.target.value)}
+              required
+            />
             <Input
               label="New Password"
               type="password"

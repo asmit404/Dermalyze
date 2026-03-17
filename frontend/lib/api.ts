@@ -22,6 +22,7 @@ const getApiBaseUrl = (): string => {
 };
 
 const API_BASE_URL = getApiBaseUrl();
+const API_KEY = (import.meta.env as ImportMetaEnv & { VITE_API_KEY?: string }).VITE_API_KEY ?? '';
 
 const assertValidResponse = (payload: unknown): ClassifyResponse => {
   if (!payload || typeof payload !== 'object' || !('classes' in payload)) {
@@ -43,8 +44,11 @@ export const classifyImage = async (imageDataUrl: string): Promise<ClassResult[]
   const formData = new FormData();
   formData.append('file', imageBlob, `lesion.${imageExt}`);
 
+  const headers: HeadersInit = API_KEY ? { 'X-API-Key': API_KEY } : {};
+
   const response = await fetch(`${API_BASE_URL}/classify`, {
     method: 'POST',
+    headers,
     body: formData,
   });
 

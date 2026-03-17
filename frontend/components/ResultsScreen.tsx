@@ -60,6 +60,12 @@ const ResultsScreen: React.FC<ResultsScreenProps> = ({
   onNavigateToHistory,
 }) => {
   const [loading, setLoading] = useState(true);
+  const [saveFailed,     setSaveFailed]     = useState(false);
+  const [saveCompleted,  setSaveCompleted]  = useState(false);
+  const [noteText,       setNoteText]       = useState('');
+  const [savingNote,     setSavingNote]     = useState(false);
+  const [noteSaved,      setNoteSaved]      = useState(false);
+  const [noteError,      setNoteError]      = useState<string | null>(null);
 
   // Doherty Threshold: skeleton -> content in < 400ms
   useEffect(() => {
@@ -115,7 +121,7 @@ const ResultsScreen: React.FC<ResultsScreenProps> = ({
 
         // Insert analysis record — id is the client-generated UUID so the
         // displayed Case ID always matches what is stored in the database.
-        await supabase.from('analyses').insert({
+        const { error: insertErr } = await supabase.from('analyses').insert({
           id: caseId,
           user_id: user.id,
           image_url,
@@ -124,14 +130,41 @@ const ResultsScreen: React.FC<ResultsScreenProps> = ({
           confidence: predictedClass.score,
           all_scores: results,
         });
-      } catch (err) {
-        // Non-blocking — failed persistence should not disrupt the results view
-        console.warn('Failed to save analysis record:', err);
+        if (insertErr) throw insertErr;
+        setSaveCompleted(true);
+      } catch {
+        // Non-blocking — show a banner so the user knows the record was not saved.
+        setSaveFailed(true);
       }
     };
 
     saveRecord();
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const saveNote = async () => {
+    if (!saveCompleted) return;
+    setSavingNote(true);
+    setNoteError(null);
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) throw new Error('Not authenticated');
+      const trimmed = noteText.trim() || null;
+      const { data: updated, error } = await supabase
+        .from('analyses')
+        .update({ notes: trimmed })
+        .eq('id', caseId)
+        .eq('user_id', user.id)
+        .select('id');
+      if (error) throw error;
+      if (!updated || updated.length === 0) throw new Error('no_rows');
+      setNoteSaved(true);
+      setTimeout(() => setNoteSaved(false), 3000);
+    } catch {
+      setNoteError('Could not save note. Please try again.');
+    } finally {
+      setSavingNote(false);
+    }
+  };
 
   /* Skeleton loading state (Doherty Threshold) */
   if (loading) {
@@ -169,6 +202,11 @@ const ResultsScreen: React.FC<ResultsScreenProps> = ({
     <div className="flex-1 flex flex-col bg-slate-50 text-slate-900">
       {/* MAIN CONTENT */}
       <main className="max-w-6xl mx-auto w-full px-4 sm:px-6 py-8 flex flex-col gap-6">
+        {saveFailed && (
+          <div role="alert" className="p-3 bg-amber-50 border border-amber-200 text-amber-700 text-xs rounded-lg font-medium">
+            This result could not be saved to your history. Please take a screenshot or note the result for your records.
+          </div>
+        )}
         {/* Case metadata bar */}
         <div className="flex flex-wrap items-center gap-x-6 gap-y-2 text-xs">
           <h1 className="text-sm font-semibold text-slate-500 uppercase tracking-widest">Analysis Result</h1>
@@ -196,6 +234,48 @@ const ResultsScreen: React.FC<ResultsScreenProps> = ({
 
         {/* MEDICAL INFO — Full-width row below the bento pair */}
         <MedicalInfoCard info={info} />
+
+        {/* CLINICIAN NOTES */}
+        {!saveFailed && (
+          <section className="bg-white rounded-xl border border-slate-200 shadow-sm p-5">
+            <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-3">Clinician Notes</p>
+            <textarea
+              value={noteText}
+              onChange={(e) => { setNoteText(e.target.value); setNoteSaved(false); setNoteError(null); }}
+              rows={3}
+              maxLength={2000}
+              placeholder="Add clinical observations, follow-up plans, or patient notes…"
+              className="w-full text-sm text-slate-700 border border-slate-200 rounded-lg p-3 resize-none focus:outline-none focus:ring-2 focus:ring-teal-400 focus:border-transparent placeholder:text-slate-300"
+            />
+            {noteError && (
+              <p className="text-xs text-red-500 font-medium mt-1">{noteError}</p>
+            )}
+            <div className="flex items-center justify-between mt-2">
+              <span className="text-xs text-slate-300">{noteText.length}/2000</span>
+              <div className="flex items-center gap-2">
+                {noteSaved && (
+                  <span className="text-xs text-teal-600 font-medium">Note saved.</span>
+                )}
+                <button
+                  onClick={saveNote}
+                  disabled={savingNote || !noteText.trim() || !saveCompleted}
+                  title={!saveCompleted ? 'Waiting for record to save…' : undefined}
+                  className="text-xs font-semibold px-3 py-1.5 rounded-lg bg-teal-600 text-white hover:bg-teal-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors flex items-center gap-1.5"
+                >
+                  {savingNote ? (
+                    <>
+                      <svg className="animate-spin h-3.5 w-3.5" viewBox="0 0 24 24" fill="none">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                      </svg>
+                      Saving…
+                    </>
+                  ) : !saveCompleted ? 'Saving record…' : 'Save note'}
+                </button>
+              </div>
+            </div>
+          </section>
+        )}
 
         {/* Action buttons — full width */}
         <div className="flex flex-col gap-3">

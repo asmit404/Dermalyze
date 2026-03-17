@@ -3,6 +3,7 @@ import React, { useState, useEffect } from 'react';
 import Input from './ui/Input';
 import Button from './ui/Button';
 import { supabase } from '../lib/supabase';
+import { friendlyAuthError } from '../lib/authErrors';
 
 interface LoginScreenProps {
   onNavigateToSignup: () => void;
@@ -11,7 +12,29 @@ interface LoginScreenProps {
 }
 
 const MAX_ATTEMPTS = 5;
-const LOCKOUT_MS = 30_000;
+// 5-minute lockout — UX convenience only. Primary brute-force protection is
+// Supabase server-side rate limiting (Dashboard → Auth → Rate Limits).
+const LOCKOUT_MS = 5 * 60 * 1_000;
+const LOCKOUT_KEY = 'dermalyze_login_lockout';
+
+function readLockout(): { failCount: number; lockedUntil: number | null } {
+  try {
+    const raw = sessionStorage.getItem(LOCKOUT_KEY);
+    if (!raw) return { failCount: 0, lockedUntil: null };
+    const parsed = JSON.parse(raw) as { failCount: number; lockedUntil: number };
+    if (Date.now() >= parsed.lockedUntil) {
+      sessionStorage.removeItem(LOCKOUT_KEY);
+      return { failCount: 0, lockedUntil: null };
+    }
+    return parsed;
+  } catch {
+    return { failCount: 0, lockedUntil: null };
+  }
+}
+
+function persistLockout(failCount: number, lockedUntil: number): void {
+  sessionStorage.setItem(LOCKOUT_KEY, JSON.stringify({ failCount, lockedUntil }));
+}
 
 const LoginScreen: React.FC<LoginScreenProps> = ({
   onNavigateToSignup,
@@ -22,9 +45,12 @@ const LoginScreen: React.FC<LoginScreenProps> = ({
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
-  const [failCount, setFailCount] = useState(0);
-  const [lockedUntil, setLockedUntil] = useState<number | null>(null);
-  const [lockCountdown, setLockCountdown] = useState(0);
+  const [failCount, setFailCount] = useState(() => readLockout().failCount);
+  const [lockedUntil, setLockedUntil] = useState<number | null>(() => readLockout().lockedUntil);
+  const [lockCountdown, setLockCountdown] = useState(() => {
+    const lu = readLockout().lockedUntil;
+    return lu ? Math.ceil((lu - Date.now()) / 1000) : 0;
+  });
 
   useEffect(() => {
     if (!lockedUntil) return;
@@ -35,6 +61,7 @@ const LoginScreen: React.FC<LoginScreenProps> = ({
         setFailCount(0);
         setLockCountdown(0);
         setError('');
+        sessionStorage.removeItem(LOCKOUT_KEY);
       } else {
         setLockCountdown(remaining);
       }
@@ -66,14 +93,15 @@ const LoginScreen: React.FC<LoginScreenProps> = ({
         if (next >= MAX_ATTEMPTS) {
           const until = Date.now() + LOCKOUT_MS;
           setLockedUntil(until);
+          persistLockout(next, until);
           setLockCountdown(Math.ceil(LOCKOUT_MS / 1000));
-          setError(`Too many failed attempts. Please wait ${LOCKOUT_MS / 1000} seconds.`);
+          setError(`Too many failed attempts. Please wait ${LOCKOUT_MS / 60_000} minutes.`);
         } else if (authError.message.includes('Invalid login credentials')) {
           setError(`Invalid email or password. ${MAX_ATTEMPTS - next} attempt${MAX_ATTEMPTS - next === 1 ? '' : 's'} remaining.`);
         } else if (authError.message.includes('Email not confirmed')) {
           setError('Please verify your email before logging in. Check your inbox for a confirmation link.');
         } else {
-          setError(authError.message);
+          setError(friendlyAuthError(authError.message));
         }
       } else {
         onLoginSuccess();
