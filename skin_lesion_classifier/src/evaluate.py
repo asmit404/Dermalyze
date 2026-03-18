@@ -53,6 +53,10 @@ from src.data.dataset import (
 )
 from src.models.convnext import SkinLesionConvNeXtClassifier
 from src.models.efficientnet import SkinLesionClassifier
+from src.models.efficientnet_b1 import SkinLesionClassifierB1
+from src.models.efficientnet_b2 import SkinLesionClassifierB2
+from src.models.efficientnet_b3 import SkinLesionClassifierB3
+from src.models.efficientnet_b4 import SkinLesionClassifierB4
 from src.tta_constants import TTA_AUG_COUNTS
 
 
@@ -226,28 +230,62 @@ def load_model(
         Tuple of (model, config, metrics)
     """
     checkpoint = torch.load(checkpoint_path, map_location=device)
-    config = checkpoint.get("config", {})
-    metrics = checkpoint.get("metrics", {})
+    if isinstance(checkpoint, dict) and "model_state_dict" in checkpoint:
+        config = checkpoint.get("config", {})
+        metrics = checkpoint.get("metrics", {})
+        model_state = checkpoint["model_state_dict"]
+    elif isinstance(checkpoint, dict):
+        # Support raw state_dict checkpoints.
+        config = {}
+        metrics = {}
+        model_state = checkpoint
+    else:
+        raise RuntimeError(
+            f"Unsupported checkpoint format at '{checkpoint_path}'. "
+            "Expected a dict containing model_state_dict or a raw state_dict."
+        )
+
+    if all(k.startswith("module.") for k in model_state.keys()):
+        # Handle DataParallel/DDP checkpoints saved with `module.` prefixes.
+        model_state = {k[len("module.") :]: v for k, v in model_state.items()}
 
     # Create model with config
     model_config = config.get("model", {})
 
-    model_constructors = [
-        (
-            "efficientnet",
-            SkinLesionClassifier,
-        ),
-        (
-            "convnext",
-            SkinLesionConvNeXtClassifier,
-        ),
+    backbone_constructors: List[Tuple[str, Any]] = [
+        ("efficientnet_b0", SkinLesionClassifier),
+        ("efficientnet_b1", SkinLesionClassifierB1),
+        ("efficientnet_b2", SkinLesionClassifierB2),
+        ("efficientnet_b3", SkinLesionClassifierB3),
+        ("efficientnet_b4", SkinLesionClassifierB4),
+        ("convnext_tiny", SkinLesionConvNeXtClassifier),
     ]
 
-    preferred_backbone = str(model_config.get("backbone", "")).lower()
-    if "convnext" in preferred_backbone:
-        model_constructors = [model_constructors[1], model_constructors[0]]
+    preferred_backbone_raw = str(model_config.get("backbone", "")).strip().lower()
+    backbone_aliases = {
+        "efficientnet": "efficientnet_b0",
+        "efficientnet-b0": "efficientnet_b0",
+        "efficientnet_b0": "efficientnet_b0",
+        "efficientnet-b1": "efficientnet_b1",
+        "efficientnet_b1": "efficientnet_b1",
+        "efficientnet-b2": "efficientnet_b2",
+        "efficientnet_b2": "efficientnet_b2",
+        "efficientnet-b3": "efficientnet_b3",
+        "efficientnet_b3": "efficientnet_b3",
+        "efficientnet-b4": "efficientnet_b4",
+        "efficientnet_b4": "efficientnet_b4",
+        "convnext": "convnext_tiny",
+        "convnext-tiny": "convnext_tiny",
+        "convnext_tiny": "convnext_tiny",
+    }
+    preferred_backbone = backbone_aliases.get(preferred_backbone_raw, "")
 
-    model_state = checkpoint["model_state_dict"]
+    model_constructors = backbone_constructors
+    if preferred_backbone:
+        model_constructors = [
+            item for item in backbone_constructors if item[0] == preferred_backbone
+        ] + [item for item in backbone_constructors if item[0] != preferred_backbone]
+
     model: Optional[nn.Module] = None
     load_error_messages = []
 
@@ -270,9 +308,11 @@ def load_model(
             load_error_messages.append(f"{architecture_name}: {exc}")
 
     if model is None:
+        attempted = ", ".join(name for name, _ in model_constructors)
         raise RuntimeError(
             "Could not load checkpoint with supported architectures "
-            "(efficientnet, convnext).\n"
+            f"({attempted}). "
+            f"Config backbone='{preferred_backbone_raw or 'unknown'}'.\n"
             + "\n".join(load_error_messages)
         )
 
