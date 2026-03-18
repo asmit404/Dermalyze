@@ -229,7 +229,7 @@ def load_model(
     Returns:
         Tuple of (model, config, metrics)
     """
-    checkpoint = torch.load(checkpoint_path, map_location=device)
+    checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=False)
     if isinstance(checkpoint, dict) and "model_state_dict" in checkpoint:
         config = checkpoint.get("config", {})
         metrics = checkpoint.get("metrics", {})

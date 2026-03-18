@@ -223,7 +223,7 @@ class SkinLesionPredictor:
         if not self.checkpoint_path.exists():
             raise FileNotFoundError(f"Checkpoint not found: {self.checkpoint_path}")
 
-        checkpoint = torch.load(self.checkpoint_path, map_location=self.device)
+        checkpoint = torch.load(self.checkpoint_path, map_location=self.device, weights_only=False)
         config = checkpoint.get("config", {})
         model_config = config.get("model", {})
 

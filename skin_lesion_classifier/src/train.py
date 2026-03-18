@@ -611,7 +611,7 @@ def load_checkpoint(
     scheduler: Optional[Any] = None,
 ) -> Tuple[int, Dict[str, float]]:
     """Load model checkpoint."""
-    checkpoint = torch.load(checkpoint_path, map_location="cpu")
+    checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
 
     model.load_state_dict(checkpoint["model_state_dict"])
 
@@ -919,7 +919,7 @@ def train(
 
     if resume_from is not None and resume_from.exists():
         logger.info(f"Resuming from checkpoint: {resume_from}")
-        checkpoint = torch.load(resume_from, map_location="cpu")
+        checkpoint = torch.load(resume_from, map_location="cpu", weights_only=False)
         model.load_state_dict(checkpoint["model_state_dict"])
         start_epoch = checkpoint.get("epoch", -1) + 1
         prev_metrics = checkpoint.get("metrics", {})
@@ -932,7 +932,7 @@ def train(
         best_checkpoint_path = output_dir / "checkpoint_best.pt"
         if best_checkpoint_path.exists():
             logger.info("Found existing best checkpoint - loading its metrics")
-            best_checkpoint = torch.load(best_checkpoint_path, map_location="cpu")
+            best_checkpoint = torch.load(best_checkpoint_path, map_location="cpu", weights_only=False)
             best_metrics = best_checkpoint.get("metrics", {})
             best_val_loss = best_metrics.get("val_loss", float("inf"))
             has_saved_best = True
