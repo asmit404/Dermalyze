@@ -37,7 +37,7 @@ const SignupScreen: React.FC<SignupScreenProps> = ({ onNavigateToLogin, onSignup
         if (!EMAIL_RE.test(value.trim())) return 'Please enter a valid email address.';
         return '';
       case 'password':
-        if (value.length > 0 && value.length < 6) return 'Password must be at least 6 characters.';
+        if (value.length > 0 && value.length < 12) return 'Password must be at least 12 characters.';
         return '';
       case 'confirmPassword':
         if (value && value !== currentPassword) return 'Passwords do not match.';

@@ -1,5 +1,5 @@
 
-import React, { useState, useEffect, useRef, lazy, Suspense } from 'react';
+import React, { useState, useEffect, useRef, useCallback, lazy, Suspense } from 'react';
 import { Routes, Route, Navigate, useNavigate, useLocation } from 'react-router-dom';
 import { supabase } from './lib/supabase';
 import type { ClassResult, AnalysisHistoryItem } from './lib/types';
@@ -47,6 +47,10 @@ const PUBLIC_ROUTES: string[] = [
   '/login', '/signup', '/forgot-password', '/reset-password', '/email-verification',
 ];
 
+const SIGNUP_EMAIL_KEY = 'dermalyze_signup_email';
+const IDLE_TIMEOUT_MS  = 30 * 60 * 1_000; // 30 minutes
+const IDLE_WARN_MS     = 28 * 60 * 1_000; // warn 2 minutes before
+
 // ── Loading fallback ──────────────────────────────────────────────────────────
 const PageLoader = () => (
   <div className="flex-1 flex items-center justify-center min-h-screen">
@@ -75,7 +79,17 @@ const App: React.FC = () => {
   const [showLogoutConfirm,   setShowLogoutConfirm]   = useState(false);
   const [prevPath,            setPrevPath]            = useState<string | null>(null);
   const [authChecked,         setAuthChecked]         = useState(false);
-  const [signupEmail,         setSignupEmail]         = useState<string>('');
+  const [signupEmail,         setSignupEmail]         = useState<string>(
+    () => sessionStorage.getItem(SIGNUP_EMAIL_KEY) ?? ''
+  );
+  const [showIdleWarning,     setShowIdleWarning]     = useState(false);
+  const lastActivityRef = useRef(Date.now());
+
+  const saveSignupEmail = useCallback((email: string) => {
+    setSignupEmail(email);
+    if (email) sessionStorage.setItem(SIGNUP_EMAIL_KEY, email);
+    else sessionStorage.removeItem(SIGNUP_EMAIL_KEY);
+  }, []);
 
   // ── Focus management ──────────────────────────────────────────────────────
   const prevPathRef = useRef<string>('');
@@ -116,6 +130,33 @@ const App: React.FC = () => {
     return () => subscription.unsubscribe();
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // ── Idle session timeout ───────────────────────────────────────────────────
+  const resetIdleTimer = useCallback(() => {
+    lastActivityRef.current = Date.now();
+    setShowIdleWarning(false);
+  }, []);
+
+  useEffect(() => {
+    const events = ['mousemove', 'keydown', 'click', 'scroll', 'touchstart'] as const;
+    events.forEach(e => window.addEventListener(e, resetIdleTimer, { passive: true }));
+
+    const interval = setInterval(async () => {
+      if (PUBLIC_ROUTES.includes(location.pathname)) return;
+      const idle = Date.now() - lastActivityRef.current;
+      if (idle >= IDLE_TIMEOUT_MS) {
+        await supabase.auth.signOut();
+        // auth listener fires SIGNED_OUT → navigate to login
+      } else if (idle >= IDLE_WARN_MS) {
+        setShowIdleWarning(true);
+      }
+    }, 60_000);
+
+    return () => {
+      events.forEach(e => window.removeEventListener(e, resetIdleTimer));
+      clearInterval(interval);
+    };
+  }, [resetIdleTimer, location.pathname]);
+
   // ── Handlers ──────────────────────────────────────────────────────────────
   const handleRequestLogout = () => {
     setPrevPath(location.pathname);
@@ -126,7 +167,12 @@ const App: React.FC = () => {
     setShowLogoutConfirm(false);
     setSelectedImage(null);
     setSelectedHistoryItem(null);
-    await supabase.auth.signOut();
+    const { error } = await supabase.auth.signOut();
+    if (error) {
+      // signOut failed — force navigation to login to clear local state even
+      // though the server-side token may not be immediately revoked.
+      navigate(ROUTES.login, { replace: true });
+    }
   };
 
   const handleCancelLogout = () => {
@@ -152,6 +198,11 @@ const App: React.FC = () => {
   return (
     <ErrorBoundary>
       <div className="min-h-screen flex flex-col bg-slate-50 text-slate-900 font-sans">
+        {showIdleWarning && !PUBLIC_ROUTES.includes(location.pathname) && (
+          <div role="alert" className="fixed top-0 left-0 right-0 z-50 bg-amber-600 text-white text-xs font-semibold text-center py-2 px-4">
+            Your session will expire in 2 minutes due to inactivity. Move your mouse or press a key to stay signed in.
+          </div>
+        )}
         <Suspense fallback={<PageLoader />}>
           <Routes>
             {/* ── Public ── */}
@@ -166,7 +217,7 @@ const App: React.FC = () => {
               <SignupScreen
                 onNavigateToLogin={() => navigate(ROUTES.login)}
                 onSignupSuccess={(email) => {
-                  setSignupEmail(email);
+                  saveSignupEmail(email);
                   navigate(ROUTES.emailVerification);
                 }}
               />
@@ -182,8 +233,9 @@ const App: React.FC = () => {
                 email={signupEmail}
                 onNavigateToLogin={() => navigate(ROUTES.login)}
                 onResendEmail={async () => {
-                  if (!signupEmail) throw new Error('No email address available to resend to.');
-                  const { error } = await supabase.auth.resend({ type: 'signup', email: signupEmail });
+                  const email = signupEmail || sessionStorage.getItem(SIGNUP_EMAIL_KEY) || '';
+                  if (!email) throw new Error('No email address available to resend to.');
+                  const { error } = await supabase.auth.resend({ type: 'signup', email });
                   if (error) throw error;
                 }}
               />
@@ -210,6 +262,7 @@ const App: React.FC = () => {
               </AppLayout>
             } />
             <Route path={ROUTES.processing} element={
+              !selectedImage ? <Navigate to={ROUTES.upload} replace /> : (
               <AppLayout onLogout={handleRequestLogout}>
                 <ProcessingScreen
                   image={selectedImage}
@@ -217,8 +270,10 @@ const App: React.FC = () => {
                   onError={(msg, retryable) => { setAnalysisError(msg ?? null); setAnalysisRetryable(retryable ?? false); navigate(ROUTES.error); }}
                 />
               </AppLayout>
+              )
             } />
             <Route path={ROUTES.results} element={
+              (!selectedImage || !analysisResults) ? <Navigate to={ROUTES.upload} replace /> : (
               <AppLayout onLogout={handleRequestLogout}>
                 <ResultsScreen
                   image={selectedImage}
@@ -227,6 +282,7 @@ const App: React.FC = () => {
                   onNavigateToHistory={() => navigate(ROUTES.history)}
                 />
               </AppLayout>
+              )
             } />
             <Route path={ROUTES.history} element={
               <AppLayout onLogout={handleRequestLogout}>
@@ -237,12 +293,15 @@ const App: React.FC = () => {
               </AppLayout>
             } />
             <Route path={ROUTES.historyDetail} element={
+              !selectedHistoryItem ? <Navigate to={ROUTES.history} replace /> : (
               <AppLayout onLogout={handleRequestLogout}>
                 <HistoryDetailScreen
+                  key={selectedHistoryItem?.id}
                   item={selectedHistoryItem}
                   onBack={() => navigate(ROUTES.history)}
                 />
               </AppLayout>
+              )
             } />
             <Route path={ROUTES.error} element={
               <AppLayout onLogout={handleRequestLogout}>

@@ -28,23 +28,28 @@ const Sidebar: React.FC<SidebarProps> = ({ onLogout, mobileOpen, onMobileClose }
   const navigate   = useNavigate();
   const location   = useLocation();
 
-  const [expanded, setExpanded] = useState<boolean>(() => {
-    return localStorage.getItem(STORAGE_KEY) !== 'false';
-  });
+  const [expanded, setExpanded] = useState<boolean>(true);
+  const [userId,      setUserId]      = useState('');
   const [userEmail,   setUserEmail]   = useState('');
   const [userName,    setUserName]    = useState('');
 
-  // Persist collapse preference
+  // Persist collapse preference (scoped to user to avoid leaking UX state between accounts)
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEY, String(expanded));
-  }, [expanded]);
+    if (!userId) return;
+    localStorage.setItem(`${STORAGE_KEY}_${userId}`, String(expanded));
+  }, [expanded, userId]);
 
-  // Load user identity for the bottom chip
+  // Load user identity and their sidebar preference
   useEffect(() => {
     supabase.auth.getUser().then(({ data: { user } }) => {
       if (user) {
         setUserEmail(user.email ?? '');
         setUserName(user.user_metadata?.full_name ?? '');
+        setUserId(user.id);
+        const stored = localStorage.getItem(`${STORAGE_KEY}_${user.id}`);
+        if (stored !== null) {
+          setExpanded(stored !== 'false');
+        }
       }
     });
   }, []);

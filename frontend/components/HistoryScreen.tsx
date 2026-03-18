@@ -21,6 +21,7 @@ const HistoryScreen: React.FC<HistoryScreenProps> = ({ onBack, onViewDetails }) 
   const [historyError,   setHistoryError]   = useState<string | null>(null);
   const [hasMore,        setHasMore]        = useState(false);
   const [page,           setPage]           = useState(0);
+  const [userId,         setUserId]         = useState<string | null>(null);
 
   // Selection / deletion state
   const [selectMode,   setSelectMode]   = useState(false);
@@ -40,7 +41,7 @@ const HistoryScreen: React.FC<HistoryScreenProps> = ({ onBack, onViewDetails }) 
     if (paths.length > 0) {
       const { data: signed } = await supabase.storage
         .from('analysis-images')
-        .createSignedUrls(paths, 60 * 60 * 24);
+        .createSignedUrls(paths, 60 * 60); // 1-hour expiry
       if (signed) {
         for (const entry of signed) {
           if (entry.signedUrl) signedUrlMap[entry.path] = entry.signedUrl;
@@ -67,6 +68,7 @@ const HistoryScreen: React.FC<HistoryScreenProps> = ({ onBack, onViewDetails }) 
         imageUrl,
         imagePath: (rawUrl && !rawUrl.startsWith('http')) ? rawUrl : undefined,
         allScores:  (row.all_scores as AnalysisHistoryItem['allScores']) ?? undefined,
+        notes:      (row.notes as string | null) ?? undefined,
       };
     });
   };
@@ -74,9 +76,14 @@ const HistoryScreen: React.FC<HistoryScreenProps> = ({ onBack, onViewDetails }) 
   useEffect(() => {
     const fetchHistory = async () => {
       try {
+        const { data: { user } } = await supabase.auth.getUser();
+        const uid = user?.id ?? null;
+        if (uid) setUserId(uid);
+
         const { data, error } = await supabase
           .from('analyses')
-          .select('id, created_at, predicted_class_id, predicted_class_name, confidence, image_url, all_scores')
+          .select('id, created_at, predicted_class_id, predicted_class_name, confidence, image_url, all_scores, notes')
+          .eq('user_id', uid ?? '')
           .order('created_at', { ascending: false })
           .range(0, PAGE_SIZE - 1);
 
@@ -94,12 +101,14 @@ const HistoryScreen: React.FC<HistoryScreenProps> = ({ onBack, onViewDetails }) 
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleLoadMore = async () => {
+    if (!userId) return;
     setLoadingMore(true);
     const nextPage = page + 1;
     try {
       const { data, error } = await supabase
         .from('analyses')
-        .select('id, created_at, predicted_class_id, predicted_class_name, confidence, image_url, all_scores')
+        .select('id, created_at, predicted_class_id, predicted_class_name, confidence, image_url, all_scores, notes')
+        .eq('user_id', userId)
         .order('created_at', { ascending: false })
         .range(nextPage * PAGE_SIZE, (nextPage + 1) * PAGE_SIZE - 1);
 
@@ -177,9 +186,13 @@ const HistoryScreen: React.FC<HistoryScreenProps> = ({ onBack, onViewDetails }) 
     setHistoryError(null);
 
     try {
+      const { data: { user }, error: userError } = await supabase.auth.getUser();
+      if (userError || !user) throw new Error('Not authenticated');
+
       const { data: allRows, error: fetchError } = await supabase
         .from('analyses')
         .select('image_url')
+        .eq('user_id', user.id)
         .not('image_url', 'is', null);
       if (fetchError) {
         throw new Error(`Failed to fetch records: ${fetchError.message}`);
@@ -195,7 +208,7 @@ const HistoryScreen: React.FC<HistoryScreenProps> = ({ onBack, onViewDetails }) 
         }
       }
 
-      const { error: dbError } = await supabase.from('analyses').delete().not('id', 'is', null);
+      const { error: dbError } = await supabase.from('analyses').delete().eq('user_id', user.id);
       if (dbError) {
         throw new Error(`Failed to clear history: ${dbError.message}`);
       }
@@ -517,7 +530,7 @@ const HistoryScreen: React.FC<HistoryScreenProps> = ({ onBack, onViewDetails }) 
 
       <footer className="mt-auto py-10 text-center border-t border-slate-100 bg-white">
         <p className="text-[11px] font-medium text-slate-500 uppercase tracking-widest leading-relaxed">
-          Clinical Support Tool. System architecture v2.0.4-pro
+          Clinical Support Tool. Designed to assist medical professionals.
         </p>
       </footer>
 

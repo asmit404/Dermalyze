@@ -3,6 +3,7 @@ import React, { useState } from 'react';
 import Input from './ui/Input';
 import Button from './ui/Button';
 import { supabase } from '../lib/supabase';
+import { friendlyAuthError } from '../lib/authErrors';
 
 interface ResetPasswordScreenProps {
   onPasswordReset: () => void;
@@ -19,8 +20,8 @@ const ResetPasswordScreen: React.FC<ResetPasswordScreenProps> = ({ onPasswordRes
     e.preventDefault();
     setError('');
 
-    if (password.length < 6) {
-      setError('Password must be at least 6 characters long.');
+    if (password.length < 12) {
+      setError('Password must be at least 12 characters long.');
       return;
     }
 
@@ -36,7 +37,7 @@ const ResetPasswordScreen: React.FC<ResetPasswordScreenProps> = ({ onPasswordRes
       });
 
       if (updateError) {
-        setError(updateError.message);
+        setError(friendlyAuthError(updateError.message));
       } else {
         setSuccess(true);
         // Sign out so the user must log in with the new password
@@ -104,7 +105,7 @@ const ResetPasswordScreen: React.FC<ResetPasswordScreenProps> = ({ onPasswordRes
             Set New Password
           </h1>
           <p className="text-slate-500 text-sm px-4">
-            Enter your new password below. It must be at least 6 characters.
+            Enter your new password below. It must be at least 12 characters.
           </p>
         </div>
 

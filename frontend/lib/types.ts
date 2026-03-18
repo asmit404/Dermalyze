@@ -14,4 +14,5 @@ export interface AnalysisHistoryItem {
   imageUrl?: string;
   imagePath?: string;
   allScores?: ClassResult[];
+  notes?: string;
 }

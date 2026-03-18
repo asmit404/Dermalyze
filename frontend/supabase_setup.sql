@@ -13,12 +13,16 @@ create table if not exists public.analyses (
   predicted_class_id  text not null,       -- e.g. "mel"
   predicted_class_name text not null,      -- e.g. "Melanoma"
   confidence          numeric(5,2) not null, -- e.g. 67.40
-  all_scores          jsonb                -- [{"id":"mel","name":"Melanoma","score":67.4}, ...]
+  all_scores          jsonb,               -- [{"id":"mel","name":"Melanoma","score":67.4}, ...]
+  notes               text                 -- free-text clinician note (nullable)
 );
 
 -- Index for fast per-user history queries
 create index if not exists analyses_user_id_created_at_idx
   on public.analyses (user_id, created_at desc);
+
+-- Migration: add notes column to existing databases (safe to re-run)
+alter table public.analyses add column if not exists notes text;
 
 
 -- ── 2. Row Level Security ─────────────────────────────────────────────────────
@@ -38,6 +42,12 @@ create policy "Users can insert own analyses"
 create policy "Users can delete own analyses"
   on public.analyses for delete
   using (auth.uid() = user_id);
+
+-- Users can update only their own records
+create policy "Users can update own analyses"
+  on public.analyses for update
+  using (auth.uid() = user_id)
+  with check (auth.uid() = user_id);
 
 
 -- ── 3. Storage bucket ─────────────────────────────────────────────────────────
@@ -77,7 +87,8 @@ create policy "Users can delete own images"
 -- Uses auth.uid() internally — no user-id parameter needed, cannot be
 -- called on behalf of another user.
 create or replace function get_dashboard_stats()
-returns json language sql stable security definer as $$
+returns json language sql stable security definer
+set search_path = public, pg_temp as $$
   select json_build_object(
     'total',          count(*),
     'this_month',     count(*) filter (where created_at >= date_trunc('month', now())),
