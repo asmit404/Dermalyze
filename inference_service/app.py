@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import io
+import importlib
 import logging
 import os
 from pathlib import Path
@@ -14,14 +15,14 @@ from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
 
-try:
-    from dotenv import load_dotenv
-
-    _env_path = Path(__file__).parent / ".env.local"
-    _loaded = load_dotenv(_env_path, override=True)
-    print(f"[dotenv] path={_env_path} loaded={_loaded}")
-except ImportError:
-    pass
+_dotenv_spec = importlib.util.find_spec("dotenv")
+if _dotenv_spec is not None:
+    dotenv = importlib.import_module("dotenv")
+    load_dotenv = getattr(dotenv, "load_dotenv", None)
+    if callable(load_dotenv):
+        _env_path = Path(__file__).parent / ".env.local"
+        _loaded = load_dotenv(_env_path, override=True)
+        print(f"[dotenv] path={_env_path} loaded={_loaded}")
 
 try:
     from .predictor import SkinLesionPredictor
@@ -42,6 +43,16 @@ CLASS_NAMES: Dict[str, str] = {
 _SERVICE_DIR = Path(__file__).resolve().parent
 _DEFAULT_CHECKPOINT = _SERVICE_DIR / "models" / "checkpoint_best.pt"
 _LEGACY_DEFAULT_CHECKPOINT = _SERVICE_DIR / "model" / "checkpoint_best.pt"
+
+DEFAULT_CORS_ORIGINS: List[str] = [
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+    "https://www.dermalyze.tech",
+    "https://dermalyze.tech",
+]
+PRODUCTION_WWW_ORIGIN = "https://www.dermalyze.tech"
 
 
 def _resolve_checkpoint_path() -> Path:
@@ -65,9 +76,16 @@ print(
 
 _raw_origins = os.environ.get(
     "CORS_ORIGINS",
-    "http://localhost:3000,http://127.0.0.1:3000,http://localhost:5173,http://127.0.0.1:5173",
+    "",
 )
-ORIGINS = [o.strip() for o in _raw_origins.split(",") if o.strip()]
+configured_origins = [o.strip() for o in _raw_origins.split(",") if o.strip()]
+ORIGINS = sorted(set(DEFAULT_CORS_ORIGINS + configured_origins))
+CORS_ORIGIN_REGEX = os.environ.get(
+    "CORS_ORIGIN_REGEX",
+    r"https://([a-zA-Z0-9-]+\.)?dermalyze\.tech",
+)
+print(f"[config] CORS_ORIGINS: {', '.join(ORIGINS)}")
+print(f"[config] CORS_ORIGIN_REGEX: {CORS_ORIGIN_REGEX}")
 
 app = FastAPI(
     title="Dermalyze Inference API",
@@ -78,14 +96,21 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=ORIGINS,
+    allow_origin_regex=CORS_ORIGIN_REGEX,
     allow_credentials=True,
-    allow_methods=["GET", "POST"],
+    allow_methods=["*"],
     allow_headers=["*"],
 )
 
 
 @app.on_event("startup")
 async def _startup_log() -> None:
+    if _raw_origins.strip() and PRODUCTION_WWW_ORIGIN not in configured_origins:
+        logger.warning(
+            "CORS_ORIGINS is set but missing %s; browser requests from the www frontend may fail.",
+            PRODUCTION_WWW_ORIGIN,
+        )
+
     if GEMINI_API_KEY:
         logger.info(
             "Gemini validation: ENABLED (key loaded, %d chars)", len(GEMINI_API_KEY)
@@ -148,8 +173,8 @@ async def _validate_dermatoscopic(
         return
 
     try:
-        from google import genai
-        from google.genai import types
+        genai = importlib.import_module("google.genai")
+        types = getattr(genai, "types")
 
         client = genai.Client(api_key=GEMINI_API_KEY)
         img = types.Part.from_bytes(data=image_bytes, mime_type=mime_type)
