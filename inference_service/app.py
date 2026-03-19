@@ -72,16 +72,10 @@ USE_TTA = os.environ.get("USE_TTA", "false").lower() == "true"
 TTA_MODE = os.environ.get("TTA_MODE", "medium")
 TTA_AGGREGATION = os.environ.get("TTA_AGGREGATION", "geometric_mean")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "").strip()
-print(
-    f"[config] GEMINI_API_KEY: {'SET' if GEMINI_API_KEY else 'NOT SET'} ({len(GEMINI_API_KEY)} chars)"
-)
 
 SUPABASE_JWT_SECRET = os.environ.get("SUPABASE_JWT_SECRET", "").strip()
 if not SUPABASE_JWT_SECRET:
     logger.warning("SUPABASE_JWT_SECRET not set — /classify endpoint will reject all requests")
-print(
-    f"[config] SUPABASE_JWT_SECRET: {'SET' if SUPABASE_JWT_SECRET else 'NOT SET'} ({len(SUPABASE_JWT_SECRET)} chars)"
-)
 
 _raw_origins = os.environ.get(
     "CORS_ORIGINS",
@@ -111,18 +105,25 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-security = HTTPBearer()
+security = HTTPBearer(auto_error=False)
 
 
-def verify_jwt_token(credentials: HTTPAuthorizationCredentials = Depends(security)) -> dict:
+def verify_jwt_token(credentials: HTTPAuthorizationCredentials | None = Depends(security)) -> dict:
     """Verify Supabase JWT token and return decoded payload.
 
     Raises HTTPException(401) if token is invalid, expired, or missing.
+    Raises HTTPException(503) if authentication service is not configured.
     """
     if not SUPABASE_JWT_SECRET:
         raise HTTPException(
             status_code=503,
             detail="Authentication service is not configured. Please contact support.",
+        )
+
+    if credentials is None:
+        raise HTTPException(
+            status_code=401,
+            detail="Missing authentication credentials.",
         )
 
     token = credentials.credentials
@@ -150,9 +151,10 @@ def verify_jwt_token(credentials: HTTPAuthorizationCredentials = Depends(securit
             detail="Token has expired. Please log in again.",
         )
     except jwt.InvalidTokenError as e:
+        logger.warning("JWT validation failed: %s", str(e))
         raise HTTPException(
             status_code=401,
-            detail=f"Invalid authentication token: {str(e)}",
+            detail="Invalid authentication token.",
         )
 
 
@@ -165,9 +167,7 @@ async def _startup_log() -> None:
         )
 
     if GEMINI_API_KEY:
-        logger.info(
-            "Gemini validation: ENABLED (key loaded, %d chars)", len(GEMINI_API_KEY)
-        )
+        logger.info("Gemini validation: ENABLED")
     else:
         logger.warning("Gemini validation: DISABLED — GEMINI_API_KEY not set")
 
