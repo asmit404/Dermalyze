@@ -2,9 +2,11 @@
 # (General Python, IDE, OS, and log patterns are in root .gitignore)
 
 # Data directories
+data/
 data/HAM10000/
 data/isic2018val/
 data/braaff-bald/
+data/balanced_19k/
 
 # Training outputs and checkpoints
 evaluation_results/
