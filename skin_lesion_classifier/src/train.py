@@ -179,11 +179,21 @@ def resolve_backbone_factories(backbone: str) -> Tuple[Any, Any, str, str]:
 
         return create_model, get_loss_function, "convnext_tiny", "ConvNeXt-Tiny"
 
+    if normalized in {"resnest101", "resnest-101", "resnest_101"}:
+        from src.models.resnest_101 import create_model_resnest101, get_loss_function
+
+        return create_model_resnest101, get_loss_function, "resnest_101", "ResNeSt-101"
+
+    if normalized in {"seresnext101", "seresnext-101", "seresnext_101", "se-resnext-101", "se_resnext_101"}:
+        from src.models.seresnext_101 import create_model_seresnext101, get_loss_function
+
+        return create_model_seresnext101, get_loss_function, "seresnext_101", "SE-ResNeXt-101"
+
     raise ValueError(
         "Unsupported model.backbone=%r. Supported values: efficientnet_b0, "
         "efficientnet_b1, efficientnet_b2, efficientnet_b3, efficientnet_b4, "
         "efficientnet_b5, efficientnet_b6, efficientnet_b7, "
-        "convnext_tiny." % backbone
+        "convnext_tiny, resnest_101, seresnext_101." % backbone
     )
 
 

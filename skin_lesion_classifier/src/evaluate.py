@@ -60,6 +60,8 @@ from src.models.efficientnet_b4 import SkinLesionClassifierB4
 from src.models.efficientnet_b5 import SkinLesionClassifierB5
 from src.models.efficientnet_b6 import SkinLesionClassifierB6
 from src.models.efficientnet_b7 import SkinLesionClassifierB7
+from src.models.resnest_101 import SkinLesionResNeSt101Classifier
+from src.models.seresnext_101 import SkinLesionSEResNeXt101Classifier
 from src.tta_constants import TTA_AUG_COUNTS
 
 
@@ -265,6 +267,8 @@ def load_model(
         ("efficientnet_b6", SkinLesionClassifierB6),
         ("efficientnet_b7", SkinLesionClassifierB7),
         ("convnext_tiny", SkinLesionConvNeXtClassifier),
+        ("resnest_101", SkinLesionResNeSt101Classifier),
+        ("seresnext_101", SkinLesionSEResNeXt101Classifier),
     ]
 
     preferred_backbone_raw = str(model_config.get("backbone", "")).strip().lower()
@@ -289,6 +293,14 @@ def load_model(
         "convnext": "convnext_tiny",
         "convnext-tiny": "convnext_tiny",
         "convnext_tiny": "convnext_tiny",
+        "resnest101": "resnest_101",
+        "resnest-101": "resnest_101",
+        "resnest_101": "resnest_101",
+        "seresnext101": "seresnext_101",
+        "seresnext-101": "seresnext_101",
+        "seresnext_101": "seresnext_101",
+        "se-resnext-101": "seresnext_101",
+        "se_resnext_101": "seresnext_101",
     }
     preferred_backbone = backbone_aliases.get(preferred_backbone_raw, "")
 
