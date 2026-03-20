@@ -96,15 +96,15 @@ DEFAULT_ISIC_DIAGNOSIS3_MAPPING = {
     "Hemangioma": "vasc",
 }
 
-# Target class distribution requested for balanced training dataset (total: 19,000)
+# Target class distribution requested for balanced training dataset (total: 21,000)
 TARGET_DISTRIBUTION = {
-    "mel": 7000,
+    "mel": 3000,
     "nv": 3000,
     "bcc": 3000,
-    "akiec": 1500,
-    "bkl": 1500,
-    "df": 1500,
-    "vasc": 1500,
+    "akiec": 3000,
+    "bkl": 3000,
+    "df": 3000,
+    "vasc": 3000,
 }
 
 
@@ -255,7 +255,7 @@ def build_balanced_augmented_dataset(
     Build a balanced dataset with augmented samples saved to disk.
 
     The output contains exactly the requested per-class counts and an
-    aggregate of 19,000 images based on TARGET_DISTRIBUTION.
+    aggregate of 21,000 images based on TARGET_DISTRIBUTION.
     
     All columns from the input DataFrame are preserved in the output,
     including metadata columns (age_approx, sex, anatom_site, etc.).
@@ -909,9 +909,9 @@ def main():
         "--build-balanced-dataset",
         action="store_true",
         help=(
-            "Create balanced augmented dataset (total 19,000) with target "
-            "distribution: mel=7000, nv=3000, bcc=3000, akiec=1500, bkl=1500, "
-            "df=1500, vasc=1500"
+            "Create balanced augmented dataset (total 21,000) with target "
+            "distribution: mel=3000, nv=3000, bcc=3000, akiec=3000, bkl=3000, "
+            "df=3000, vasc=3000"
         ),
     )
     parser.add_argument(
@@ -973,7 +973,7 @@ def main():
 
     if args.build_balanced_dataset:
         if args.balanced_output_dir is None:
-            args.balanced_output_dir = args.data_dir / "balanced_19k"
+            args.balanced_output_dir = args.data_dir / "balanced_21k"
         if args.balanced_output_csv is None:
             args.balanced_output_csv = args.balanced_output_dir / "labels.csv"
 

@@ -104,7 +104,7 @@ ISIC_0000001,nv,,30.0,female,anterior torso
 | ISIC 2019 Test | ✅ | ✅ | One-hot | ✅ Full support |
 | ISIC 2018 Val | ✅ | ✅ | One-hot | ✅ Full support |
 | HAM10000 | ✅ | ✅ | Single-label | ✅ Full support |
-| balanced_19k | ✅ | ❌ | Single-label | ✅ Labels only |
+| balanced_21k | ✅ | ❌ | Single-label | ✅ Labels only |
 | braaff-bald | ✅ | ✅ | Single-label | ✅ Full support |
 
 ### Create Balanced Dataset with Metadata
@@ -114,13 +114,13 @@ python skin_lesion_classifier/src/prepare_data.py \
   --data-dir data/ISIC2019Training \
   --metadata-columns age_approx sex anatom_site \
   --build-balanced-dataset \
-  --balanced-output-dir data/balanced_19k \
-  --balanced-output-csv data/balanced_19k/labels_with_metadata.csv
+  --balanced-output-dir data/balanced_21k \
+  --balanced-output-csv data/balanced_21k/labels_with_metadata.csv
 ```
 
-Creates balanced training data (19,000 images) with:
+Creates balanced training data (21,000 images) with:
 - **Metadata preservation**: age_approx, sex, anatom_site preserved through augmentation
-- **Class distribution**: mel=7000, nv=3000, bcc=3000, akiec=1500, bkl=1500, df=1500, vasc=1500
+- **Class distribution**: mel=3000, nv=3000, bcc=3000, akiec=3000, bkl=3000, df=3000, vasc=3000
 - **Augmented images**: New variations retain source metadata
 
 ## Workflow
