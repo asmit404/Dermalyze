@@ -3,6 +3,7 @@ import React, { useState } from 'react';
 import Input from './ui/Input';
 import Button from './ui/Button';
 import { supabase } from '../lib/supabase';
+import { friendlyAuthError } from '../lib/authErrors';
 
 interface SignupScreenProps {
   onNavigateToLogin: () => void;
@@ -106,7 +107,7 @@ const SignupScreen: React.FC<SignupScreenProps> = ({ onNavigateToLogin, onSignup
         if (authError.message.includes('valid email')) {
           setServerError('Please enter a valid email address.');
         } else {
-          setServerError(authError.message);
+          setServerError(friendlyAuthError(authError.message));
         }
       } else if (data.user?.identities?.length === 0) {
         // Supabase silently "succeeds" for existing emails to prevent enumeration.
