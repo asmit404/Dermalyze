@@ -12,6 +12,7 @@ from .dataset import (
     get_inference_transform,
     preprocess_image,
 )
+from .metadata_encoder import MetadataEncoder
 
 __all__ = [
     "HAM10000Dataset",
@@ -24,4 +25,5 @@ __all__ = [
     "get_class_weights_for_loss",
     "get_inference_transform",
     "preprocess_image",
+    "MetadataEncoder",
 ]

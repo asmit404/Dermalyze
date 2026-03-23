@@ -159,15 +159,41 @@ def resolve_backbone_factories(backbone: str) -> Tuple[Any, Any, str, str]:
 
         return create_model_b4, get_loss_function, "efficientnet_b4", "EfficientNet-B4"
 
+    if normalized in {"efficientnet_b5", "efficientnet-b5"}:
+        from src.models.efficientnet_b5 import create_model_b5, get_loss_function
+
+        return create_model_b5, get_loss_function, "efficientnet_b5", "EfficientNet-B5"
+
+    if normalized in {"efficientnet_b6", "efficientnet-b6"}:
+        from src.models.efficientnet_b6 import create_model_b6, get_loss_function
+
+        return create_model_b6, get_loss_function, "efficientnet_b6", "EfficientNet-B6"
+
+    if normalized in {"efficientnet_b7", "efficientnet-b7"}:
+        from src.models.efficientnet_b7 import create_model_b7, get_loss_function
+
+        return create_model_b7, get_loss_function, "efficientnet_b7", "EfficientNet-B7"
+
     if normalized in {"convnext", "convnext_tiny", "convnext-tiny"}:
         from src.models.convnext import create_model, get_loss_function
 
         return create_model, get_loss_function, "convnext_tiny", "ConvNeXt-Tiny"
 
+    if normalized in {"resnest101", "resnest-101", "resnest_101"}:
+        from src.models.resnest_101 import create_model_resnest101, get_loss_function
+
+        return create_model_resnest101, get_loss_function, "resnest_101", "ResNeSt-101"
+
+    if normalized in {"seresnext101", "seresnext-101", "seresnext_101", "se-resnext-101", "se_resnext_101"}:
+        from src.models.seresnext_101 import create_model_seresnext101, get_loss_function
+
+        return create_model_seresnext101, get_loss_function, "seresnext_101", "SE-ResNeXt-101"
+
     raise ValueError(
         "Unsupported model.backbone=%r. Supported values: efficientnet_b0, "
         "efficientnet_b1, efficientnet_b2, efficientnet_b3, efficientnet_b4, "
-        "convnext_tiny." % backbone
+        "efficientnet_b5, efficientnet_b6, efficientnet_b7, "
+        "convnext_tiny, resnest_101, seresnext_101." % backbone
     )
 
 

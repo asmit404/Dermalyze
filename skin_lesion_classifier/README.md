@@ -60,7 +60,7 @@ python src/prepare_data.py \
     --data-dir data/dataset \
     --label-mapping-file path/to/label_mapping.json
 
-# 3b. (Optional) Build class-balanced augmented dataset (19,000 images)
+# 3b. (Optional) Build class-balanced augmented dataset (21,000 images)
 python src/prepare_data.py \
     --data-dir data/HAM10000 \
     --build-balanced-dataset
@@ -143,17 +143,17 @@ data/HAM10000/
 ```
 
 Balanced offline augmentation target (for `--build-balanced-dataset`):
-- `mel`: 7000
+- `mel`: 3000
 - `nv`: 3000
 - `bcc`: 3000
-- `akiec`: 1500
-- `bkl`: 1500
-- `df`: 1500
-- `vasc`: 1500
+- `akiec`: 3000
+- `bkl`: 3000
+- `df`: 3000
+- `vasc`: 3000
 
 Default output:
-- images: `data/HAM10000/balanced_19k/images`
-- labels: `data/HAM10000/balanced_19k/labels.csv`
+- images: `data/HAM10000/balanced_21k/images`
+- labels: `data/HAM10000/balanced_21k/labels.csv`
 
 To train on the balanced dataset, point config values to those paths:
 - `data.images_dir`

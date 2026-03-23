@@ -57,6 +57,11 @@ from src.models.efficientnet_b1 import SkinLesionClassifierB1
 from src.models.efficientnet_b2 import SkinLesionClassifierB2
 from src.models.efficientnet_b3 import SkinLesionClassifierB3
 from src.models.efficientnet_b4 import SkinLesionClassifierB4
+from src.models.efficientnet_b5 import SkinLesionClassifierB5
+from src.models.efficientnet_b6 import SkinLesionClassifierB6
+from src.models.efficientnet_b7 import SkinLesionClassifierB7
+from src.models.resnest_101 import SkinLesionResNeSt101Classifier
+from src.models.seresnext_101 import SkinLesionSEResNeXt101Classifier
 from src.tta_constants import TTA_AUG_COUNTS
 
 
@@ -258,7 +263,12 @@ def load_model(
         ("efficientnet_b2", SkinLesionClassifierB2),
         ("efficientnet_b3", SkinLesionClassifierB3),
         ("efficientnet_b4", SkinLesionClassifierB4),
+        ("efficientnet_b5", SkinLesionClassifierB5),
+        ("efficientnet_b6", SkinLesionClassifierB6),
+        ("efficientnet_b7", SkinLesionClassifierB7),
         ("convnext_tiny", SkinLesionConvNeXtClassifier),
+        ("resnest_101", SkinLesionResNeSt101Classifier),
+        ("seresnext_101", SkinLesionSEResNeXt101Classifier),
     ]
 
     preferred_backbone_raw = str(model_config.get("backbone", "")).strip().lower()
@@ -274,9 +284,23 @@ def load_model(
         "efficientnet_b3": "efficientnet_b3",
         "efficientnet-b4": "efficientnet_b4",
         "efficientnet_b4": "efficientnet_b4",
+        "efficientnet-b5": "efficientnet_b5",
+        "efficientnet_b5": "efficientnet_b5",
+        "efficientnet-b6": "efficientnet_b6",
+        "efficientnet_b6": "efficientnet_b6",
+        "efficientnet-b7": "efficientnet_b7",
+        "efficientnet_b7": "efficientnet_b7",
         "convnext": "convnext_tiny",
         "convnext-tiny": "convnext_tiny",
         "convnext_tiny": "convnext_tiny",
+        "resnest101": "resnest_101",
+        "resnest-101": "resnest_101",
+        "resnest_101": "resnest_101",
+        "seresnext101": "seresnext_101",
+        "seresnext-101": "seresnext_101",
+        "seresnext_101": "seresnext_101",
+        "se-resnext-101": "seresnext_101",
+        "se_resnext_101": "seresnext_101",
     }
     preferred_backbone = backbone_aliases.get(preferred_backbone_raw, "")
 

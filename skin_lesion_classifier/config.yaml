@@ -6,8 +6,8 @@
 # Data Configuration
 # -----------------------------------------------------------------------------
 data:
-  images_dir: data/HAM10000/balanced_19k/images
-  labels_csv: data/HAM10000/balanced_19k/labels.csv
+  images_dir: data/ISIC2019Training/images
+  labels_csv: data/ISIC2019Training/labels.csv
   split_seed: 42
   val_size: 0.15
   test_size: 0.15
@@ -17,6 +17,12 @@ data:
     n_splits: 5
     fold_index: 0
     group_column: lesion_id
+
+  # Metadata Configuration (Optional)
+  # Enable to use patient metadata (age, sex, anatomical site) along with images
+  # Requires CSV to have columns: age, sex, localization
+  use_metadata: true
+  metadata_columns: [age_approx, anatom_site_general, sex]
 
 # -----------------------------------------------------------------------------
 # Model Configuration

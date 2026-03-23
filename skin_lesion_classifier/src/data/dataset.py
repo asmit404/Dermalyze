@@ -55,6 +55,8 @@ class HAM10000Dataset(Dataset):
         images_dir: Path to directory containing images
         transform: Optional transforms to apply to images
         target_transform: Optional transforms to apply to labels
+        use_metadata: Whether to return metadata along with images
+        metadata_columns: List of metadata columns to include
     """
 
     def __init__(
@@ -63,6 +65,8 @@ class HAM10000Dataset(Dataset):
         images_dir: Path | str,
         transform: Optional[Callable] = None,
         target_transform: Optional[Callable] = None,
+        use_metadata: bool = False,
+        metadata_columns: Optional[list[str]] = None,
     ):
         """
         Initialize the dataset.
@@ -72,14 +76,37 @@ class HAM10000Dataset(Dataset):
             images_dir: Directory containing the image files
             transform: Transformations to apply to images
             target_transform: Transformations to apply to labels
+            use_metadata: Whether to load and return metadata (age, sex, localization)
+            metadata_columns: List of metadata columns to include (default: ['age', 'sex', 'localization'])
         """
         self.df = df.reset_index(drop=True)
         self.images_dir = Path(images_dir)
         self.transform = transform
         self.target_transform = target_transform
+        self.use_metadata = use_metadata
+
+        # Default metadata columns from HAM10000 dataset
+        if metadata_columns is None:
+            self.metadata_columns = ['age', 'sex', 'localization']
+        else:
+            self.metadata_columns = metadata_columns
+
+        # Validate metadata columns if requested
+        if self.use_metadata:
+            self._validate_metadata_columns()
 
         # Validate that all images exist
         self._validate_images()
+
+    def _validate_metadata_columns(self) -> None:
+        """Validate that requested metadata columns exist in the DataFrame."""
+        missing_cols = [col for col in self.metadata_columns if col not in self.df.columns]
+        if missing_cols:
+            available_cols = list(self.df.columns)
+            raise ValueError(
+                f"Requested metadata columns {missing_cols} not found in dataset. "
+                f"Available columns: {available_cols}"
+            )
 
     def _validate_images(self) -> None:
         """Validate that all referenced images exist on disk."""
@@ -109,7 +136,7 @@ class HAM10000Dataset(Dataset):
     def __len__(self) -> int:
         return len(self.df)
 
-    def __getitem__(self, idx: int) -> Tuple[torch.Tensor, int]:
+    def __getitem__(self, idx: int) -> Tuple[torch.Tensor, int] | Tuple[torch.Tensor, int, dict]:
         """
         Get a sample from the dataset.
 
@@ -117,7 +144,8 @@ class HAM10000Dataset(Dataset):
             idx: Index of the sample
 
         Returns:
-            Tuple of (image_tensor, label_index)
+            If use_metadata=False: Tuple of (image_tensor, label_index)
+            If use_metadata=True: Tuple of (image_tensor, label_index, metadata_dict)
         """
         row = self.df.iloc[idx]
         image_id = row["image_id"]
@@ -137,7 +165,19 @@ class HAM10000Dataset(Dataset):
         if self.target_transform:
             label_idx = self.target_transform(label_idx)
 
-        return image, label_idx
+        # Return with or without metadata
+        if self.use_metadata:
+            metadata = {}
+            for col in self.metadata_columns:
+                value = row[col]
+                # Handle NaN/None values
+                if pd.isna(value):
+                    metadata[col] = None
+                else:
+                    metadata[col] = value
+            return image, label_idx, metadata
+        else:
+            return image, label_idx
 
     def get_class_distribution(self) -> dict:
         """Get the distribution of classes in the dataset."""

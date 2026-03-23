@@ -1,22 +1,34 @@
 """
-Data Preparation Script for HAM10000 Dataset.
+Data Preparation Script for Skin Lesion Datasets.
 
-This script helps prepare the HAM10000 dataset for training by:
-1. Validating the dataset structure
-2. Creating the labels CSV file from metadata
-3. Performing basic data quality checks
-4. Generating dataset statistics
+This script helps prepare multiple skin lesion datasets for training by:
+1. Supporting multiple dataset formats (HAM10000, ISIC, etc.)
+2. Extracting metadata columns (age_approx, sex, anatom_site)
+3. Validating the dataset structure
+4. Creating the labels CSV file from metadata
+5. Performing basic data quality checks
+6. Generating dataset statistics
+7. Optional balanced augmented dataset creation
 
-The HAM10000 dataset should be downloaded from:
-https://dataverse.harvard.edu/dataset.xhtml?persistentId=doi:10.7910/DVN/DBW86T
+Supported datasets include:
+- HAM10000: https://dataverse.harvard.edu/dataset.xhtml?persistentId=doi:10.7910/DVN/DBW86T
+- ISIC 2019: https://www.isic-archive.com/
+- ISIC 2018: https://www.isic-archive.com/
 
-After downloading, organize the data as follows:
-data/HAM10000/
+Example dataset structures:
+data/ISIC2019Training/
     images/
         ISIC_0024306.jpg
         ISIC_0024307.jpg
         ...
-    HAM10000_metadata.csv  (original metadata file)
+    metadata.csv  (contains age_approx, sex, anatom_site_general)
+    labels.csv
+
+data/HAM10000/
+    images/
+        ISIC_0024306.jpg
+        ...
+    HAM10000_metadata.csv
 """
 
 from __future__ import annotations
@@ -84,15 +96,15 @@ DEFAULT_ISIC_DIAGNOSIS3_MAPPING = {
     "Hemangioma": "vasc",
 }
 
-# Target class distribution requested for balanced training dataset (total: 19,000)
+# Target class distribution requested for balanced training dataset (total: 21,000)
 TARGET_DISTRIBUTION = {
-    "mel": 7000,
+    "mel": 3000,
     "nv": 3000,
     "bcc": 3000,
-    "akiec": 1500,
-    "bkl": 1500,
-    "df": 1500,
-    "vasc": 1500,
+    "akiec": 3000,
+    "bkl": 3000,
+    "df": 3000,
+    "vasc": 3000,
 }
 
 
@@ -243,7 +255,22 @@ def build_balanced_augmented_dataset(
     Build a balanced dataset with augmented samples saved to disk.
 
     The output contains exactly the requested per-class counts and an
-    aggregate of 19,000 images based on TARGET_DISTRIBUTION.
+    aggregate of 21,000 images based on TARGET_DISTRIBUTION.
+    
+    All columns from the input DataFrame are preserved in the output,
+    including metadata columns (age_approx, sex, anatom_site, etc.).
+    For augmented images, metadata is copied from the source image.
+    
+    Args:
+        df: Input DataFrame with columns: image_id, label, and optional metadata
+        data_dir: Root data directory containing 'images' folder
+        output_dir: Output directory for balanced dataset
+        output_csv: Output CSV path (will include all columns from input df)
+        target_distribution: Dict mapping labels to target counts
+        seed: Random seed for reproducibility
+        
+    Returns:
+        DataFrame with balanced dataset including all metadata columns
     """
     try:
         import cv2
@@ -268,6 +295,11 @@ def build_balanced_augmented_dataset(
 
     logger.info("Building balanced augmented dataset")
     logger.info(f"Output directory: {output_dir}")
+    
+    # Log metadata columns that will be preserved
+    metadata_cols = [col for col in df.columns if col not in ["image_id", "label", "lesion_id"]]
+    if metadata_cols:
+        logger.info(f"Preserving metadata columns: {', '.join(metadata_cols)}")
 
     rng = np.random.default_rng(seed)
     records = []
@@ -384,21 +416,159 @@ def validate_image(image_path: Path) -> Tuple[bool, Optional[str]]:
         return False, str(e)
 
 
+def _extract_metadata_columns(
+    metadata: pd.DataFrame,
+    metadata_columns: Optional[list] = None,
+) -> Dict[str, str]:
+    """
+    Map metadata column names to standardized names.
+    
+    Handles multiple naming conventions across different ISIC versions.
+    
+    Args:
+        metadata: DataFrame with metadata
+        metadata_columns: List of columns to extract (e.g., ['age_approx', 'anatom_site', 'sex'])
+        
+    Returns:
+        Dict mapping standardized names to actual column names in metadata
+    """
+    if metadata_columns is None:
+        metadata_columns = ["age_approx", "sex", "anatom_site"]
+    
+    column_aliases = {
+        "age_approx": ["age_approx", "age"],
+        "sex": ["sex", "gender"],
+        "anatom_site": [
+            "anatom_site",
+            "anatom_site_general",
+            "anatomic_site",
+            "anatomic_site_general",
+        ],
+        "lesion_id": ["lesion_id"],
+    }
+    
+    found_columns = {}
+    for target_name in metadata_columns:
+        aliases = column_aliases.get(target_name, [])
+        for alias in aliases:
+            if alias in metadata.columns:
+                found_columns[target_name] = alias
+                break
+    
+    return found_columns
+
+
+def _convert_onehot_to_label(row: pd.Series) -> str:
+    """Convert one-hot encoded labels to single label."""
+    # Label mapping from ISIC dataset
+    label_map = {
+        "MEL": "mel",
+        "NV": "nv",
+        "BCC": "bcc",
+        "AK": "akiec",
+        "BKL": "bkl",
+        "DF": "df",
+        "VASC": "vasc",
+        "SCC": "akiec",  # Squamous cell carcinoma -> akiec
+        "UNK": "unknown",
+    }
+    
+    # Find the label with value 1.0 (or highest value)
+    for col, label in label_map.items():
+        if col in row.index and row[col] == 1.0:
+            return label
+    
+    # If multiple columns are 1.0 or none, return unknown
+    return "unknown"
+
+
+def _load_isic_labels(labels_file: Path) -> pd.DataFrame:
+    """Load ISIC one-hot encoded labels and convert to single-label format."""
+    df = pd.read_csv(labels_file)
+    
+    # Check if this is one-hot encoded (contains MEL, NV, BCC columns)
+    label_cols = ["MEL", "NV", "BCC", "AK", "BKL", "DF", "VASC", "SCC", "UNK"]
+    if all(col in df.columns for col in label_cols):
+        # Convert one-hot to single label
+        df["label"] = df[label_cols].apply(_convert_onehot_to_label, axis=1)
+        # Rename image column to image_id if needed
+        if "image" in df.columns:
+            df = df.rename(columns={"image": "image_id"})
+        # Keep only image_id and label
+        df = df[["image_id", "label"]].copy()
+        return df
+    else:
+        # Already in single-label format
+        return df
+
+
+def _merge_labels_and_metadata(
+    labels_df: pd.DataFrame,
+    metadata_df: pd.DataFrame,
+    metadata_columns: Optional[list] = None,
+) -> pd.DataFrame:
+    """Merge labels CSV with metadata CSV."""
+    # Ensure image_id column exists in both
+    if "image_id" not in labels_df.columns:
+        if "image" in labels_df.columns:
+            labels_df = labels_df.rename(columns={"image": "image_id"})
+    
+    if "image_id" not in metadata_df.columns:
+        if "image" in metadata_df.columns:
+            metadata_df = metadata_df.rename(columns={"image": "image_id"})
+    
+    # Extract metadata columns
+    found_metadata_cols = _extract_metadata_columns(metadata_df, metadata_columns)
+    
+    # Build list of columns to keep from metadata
+    columns_to_keep = ["image_id"]
+    if "lesion_id" in metadata_df.columns:
+        columns_to_keep.append("lesion_id")
+    
+    for target_name, actual_name in found_metadata_cols.items():
+        columns_to_keep.append(actual_name)
+    
+    metadata_subset = metadata_df[columns_to_keep].copy()
+    
+    # Rename metadata columns to standardized names
+    rename_dict = {}
+    for target_name, actual_name in found_metadata_cols.items():
+        if actual_name != target_name:
+            rename_dict[actual_name] = target_name
+    if rename_dict:
+        metadata_subset = metadata_subset.rename(columns=rename_dict)
+    
+    # Merge on image_id
+    merged = labels_df.merge(metadata_subset, on="image_id", how="left")
+    
+    return merged
+
+
 def prepare_dataset(
     data_dir: Path,
     output_csv: Path,
     metadata_file: Optional[Path] = None,
+    labels_file: Optional[Path] = None,
     validate_images: bool = True,
     label_mapping: Optional[Dict[str, str]] = None,
+    metadata_columns: Optional[list] = None,
 ) -> pd.DataFrame:
     """
-    Prepare the HAM10000 dataset for training.
+    Prepare the dataset for training, supporting multiple dataset formats.
+
+    Handles datasets where:
+    - Labels and metadata are in a single file (HAM10000 style)
+    - Labels and metadata are in separate files (ISIC style)
+    - Labels are one-hot encoded (ISIC style)
 
     Args:
         data_dir: Root data directory (should contain 'images' folder)
         output_csv: Path to save the prepared labels CSV
-        metadata_file: Path to original HAM10000_metadata.csv
+        metadata_file: Path to original metadata file
+        labels_file: Path to labels file (for ISIC-style datasets)
         validate_images: Whether to validate all images
+        label_mapping: Optional mapping from raw labels to expected classes
+        metadata_columns: List of metadata columns to extract (e.g., ['age_approx', 'sex', 'anatom_site'])
 
     Returns:
         Prepared DataFrame
@@ -418,35 +588,46 @@ def prepare_dataset(
 
     logger.info(f"Found {len(image_files)} images")
 
-    # Try to load metadata
+    # Try to find labels and metadata files if not provided
+    if labels_file is None:
+        possible_labels_names = [
+            "labels.csv",
+            "ISIC_2019_Training_GroundTruth.csv",
+            "ISIC_2019_Test_GroundTruth.csv",
+        ]
+        for name in possible_labels_names:
+            candidate = data_dir / name
+            if candidate.exists():
+                labels_file = candidate
+                break
+
     if metadata_file is None:
-        # Look for common metadata file names
-        possible_names = [
-            "HAM10000_metadata.csv",
+        possible_metadata_names = [
             "metadata.csv",
+            "ISIC_2019_Training_Metadata.csv",
+            "ISIC_2019_Test_Metadata.csv",
+            "HAM10000_metadata.csv",
             "HAM10000_metadata.tab",
         ]
-        for name in possible_names:
+        for name in possible_metadata_names:
             candidate = data_dir / name
             if candidate.exists():
                 metadata_file = candidate
                 break
 
-    if metadata_file is None or not metadata_file.exists():
-        logger.warning(
-            "Metadata file not found. Creating labels from directory structure or "
-            "please ensure images are organized by class or provide metadata file."
-        )
-        # Create placeholder DataFrame
-        df = pd.DataFrame(
-            {
-                "image_id": [f.stem for f in image_files],
-                "label": ["unknown"] * len(image_files),
-            }
-        )
-        logger.warning("Labels set to 'unknown' - please update labels.csv manually")
-    else:
-        # Load metadata
+    # Case 1: ISIC style with separate labels and metadata files
+    if labels_file is not None and labels_file.exists():
+        logger.info(f"Loading labels from: {labels_file}")
+        df = _load_isic_labels(labels_file)
+
+        if metadata_file is not None and metadata_file.exists():
+            logger.info(f"Loading metadata from: {metadata_file}")
+            metadata = pd.read_csv(metadata_file)
+            df = _merge_labels_and_metadata(df, metadata, metadata_columns)
+            logger.info(f"Merged labels and metadata for {len(df)} images")
+
+    # Case 2: Single metadata file (HAM10000, older ISIC style)
+    elif metadata_file is not None and metadata_file.exists():
         logger.info(f"Loading metadata from: {metadata_file}")
 
         if metadata_file.suffix == ".tab":
@@ -490,35 +671,66 @@ def prepare_dataset(
                 f"Found: {list(metadata.columns)}"
             )
 
+        # Extract requested metadata columns
+        found_metadata_cols = _extract_metadata_columns(metadata, metadata_columns)
+        
         # Keep only needed columns
         columns_to_keep = ["image_id", "label"]
         if "lesion_id" in metadata.columns:
             columns_to_keep.append("lesion_id")
+        
+        # Add found metadata columns
+        for target_name, actual_name in found_metadata_cols.items():
+            columns_to_keep.append(actual_name)
+            logger.info(f"Including metadata column: {actual_name} (as {target_name})")
 
         df = metadata[columns_to_keep].copy()
-
-        if label_mapping:
-            mapping_normalized = {k.strip(): v.strip() for k, v in label_mapping.items()}
-            mapping_casefold = {k.casefold(): v for k, v in mapping_normalized.items()}
-
-            def _map_label(value: object) -> str:
-                if pd.isna(value):
-                    return "unknown"
-                raw = str(value).strip()
-                if raw in mapping_normalized:
-                    return mapping_normalized[raw]
-                return mapping_casefold.get(raw.casefold(), raw)
-
-            before_unique = df["label"].nunique(dropna=False)
-            df["label"] = df["label"].apply(_map_label)
-            after_unique = df["label"].nunique(dropna=False)
-            logger.info(
-                "Applied label mapping: %d unique labels -> %d unique labels",
-                before_unique,
-                after_unique,
-            )
+        
+        # Rename metadata columns to standardized names
+        rename_dict = {}
+        for target_name, actual_name in found_metadata_cols.items():
+            if actual_name != target_name:
+                rename_dict[actual_name] = target_name
+        if rename_dict:
+            df = df.rename(columns=rename_dict)
 
         logger.info(f"Loaded metadata for {len(df)} images")
+
+    else:
+        logger.warning(
+            "Metadata file not found. Creating labels from directory structure or "
+            "please ensure images are organized by class or provide metadata file."
+        )
+        # Create placeholder DataFrame
+        df = pd.DataFrame(
+            {
+                "image_id": [f.stem for f in image_files],
+                "label": ["unknown"] * len(image_files),
+            }
+        )
+        logger.warning("Labels set to 'unknown' - please update labels.csv manually")
+
+    # Apply label mapping if provided
+    if label_mapping:
+        mapping_normalized = {k.strip(): v.strip() for k, v in label_mapping.items()}
+        mapping_casefold = {k.casefold(): v for k, v in mapping_normalized.items()}
+
+        def _map_label(value: object) -> str:
+            if pd.isna(value):
+                return "unknown"
+            raw = str(value).strip()
+            if raw in mapping_normalized:
+                return mapping_normalized[raw]
+            return mapping_casefold.get(raw.casefold(), raw)
+
+        before_unique = df["label"].nunique(dropna=False)
+        df["label"] = df["label"].apply(_map_label)
+        after_unique = df["label"].nunique(dropna=False)
+        logger.info(
+            "Applied label mapping: %d unique labels -> %d unique labels",
+            before_unique,
+            after_unique,
+        )
 
     # Validate labels
     unique_labels = df["label"].unique()
@@ -619,18 +831,29 @@ def print_statistics(df: pd.DataFrame) -> None:
         print(f"Unique lesions: {unique_lesions}")
         print(f"Average images per lesion: {images_per_lesion:.1f}")
 
+    # Metadata columns info
+    metadata_cols = [col for col in df.columns if col not in ["image_id", "label", "lesion_id"]]
+    if metadata_cols:
+        print("\nMetadata columns:")
+        print("-" * 40)
+        for col in metadata_cols:
+            non_null_count = df[col].notna().sum()
+            non_null_pct = (non_null_count / len(df)) * 100
+            unique_vals = df[col].nunique()
+            print(f"  {col}: {non_null_count} non-null ({non_null_pct:.1f}%), {unique_vals} unique values")
+
     print("=" * 60 + "\n")
 
 
 def main():
     """Main entry point."""
     parser = argparse.ArgumentParser(
-        description="Prepare HAM10000 dataset for training"
+        description="Prepare skin lesion datasets for training (supports HAM10000, ISIC, etc.)"
     )
     parser.add_argument(
         "--data-dir",
         type=Path,
-        default=Path("data/HAM10000"),
+        default=Path("data/ISIC2019Training"),
         help="Root data directory",
     )
     parser.add_argument(
@@ -644,6 +867,12 @@ def main():
         type=Path,
         default=None,
         help="Path to original metadata file",
+    )
+    parser.add_argument(
+        "--labels",
+        type=Path,
+        default=None,
+        help="Path to labels file (for ISIC-style datasets with separate labels)",
     )
     parser.add_argument(
         "--label-mapping-file",
@@ -663,6 +892,15 @@ def main():
         ),
     )
     parser.add_argument(
+        "--metadata-columns",
+        nargs="+",
+        default=None,
+        help=(
+            "Metadata columns to extract (e.g., age_approx sex anatom_site). "
+            "Automatically handles column name variations across datasets."
+        ),
+    )
+    parser.add_argument(
         "--skip-validation",
         action="store_true",
         help="Skip image validation",
@@ -671,9 +909,9 @@ def main():
         "--build-balanced-dataset",
         action="store_true",
         help=(
-            "Create balanced augmented dataset (total 19,000) with target "
-            "distribution: mel=7000, nv=3000, bcc=3000, akiec=1500, bkl=1500, "
-            "df=1500, vasc=1500"
+            "Create balanced augmented dataset (total 21,000) with target "
+            "distribution: mel=3000, nv=3000, bcc=3000, akiec=3000, bkl=3000, "
+            "df=3000, vasc=3000"
         ),
     )
     parser.add_argument(
@@ -708,12 +946,13 @@ def main():
     args.data_dir = _resolve_project_path(args.data_dir)
     args.output = _resolve_project_path(args.output)
     args.metadata = _resolve_project_path(args.metadata)
+    args.labels = _resolve_project_path(args.labels)
     args.label_mapping_file = _resolve_project_path(args.label_mapping_file)
     args.balanced_output_dir = _resolve_project_path(args.balanced_output_dir)
     args.balanced_output_csv = _resolve_project_path(args.balanced_output_csv)
 
     if args.output is None:
-        args.output = args.data_dir / "labels.csv"
+        args.output = args.data_dir / "labels_with_metadata.csv"
 
     label_mapping = load_label_mapping(
         label_mapping_file=args.label_mapping_file,
@@ -724,15 +963,17 @@ def main():
         data_dir=args.data_dir,
         output_csv=args.output,
         metadata_file=args.metadata,
+        labels_file=args.labels,
         validate_images=not args.skip_validation,
         label_mapping=label_mapping,
+        metadata_columns=args.metadata_columns,
     )
 
     print_statistics(df)
 
     if args.build_balanced_dataset:
         if args.balanced_output_dir is None:
-            args.balanced_output_dir = args.data_dir / "balanced_19k"
+            args.balanced_output_dir = args.data_dir / "balanced_21k"
         if args.balanced_output_csv is None:
             args.balanced_output_csv = args.balanced_output_dir / "labels.csv"
 
