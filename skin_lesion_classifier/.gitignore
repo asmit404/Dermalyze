@@ -2,9 +2,9 @@
 # (General Python, IDE, OS, and log patterns are in root .gitignore)
 
 # Data directories
-data/ISIC2018_Training
-data/ISIC2018_Test
-data/ISIC2018_Val
+data/HAM10000_Training
+data/HAM10000_Test
+data/HAM10000_Val
 data/braff-bald
 
 # Training outputs and checkpoints

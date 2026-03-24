@@ -115,3 +115,6 @@ docker-compose.override.yml
 .ipynb_checkpoints/
 tmp/
 temp/
+
+# Copilot
+CLAUDE.md
