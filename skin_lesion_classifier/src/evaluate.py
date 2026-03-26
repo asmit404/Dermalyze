@@ -834,6 +834,25 @@ def compute_metrics(
             ),
         }
 
+    # One-vs-rest confusion counts per class
+    per_class_confusion_counts: Dict[str, Dict[str, int]] = {}
+    one_vs_rest_count_matrix = np.zeros((len(class_names), 4), dtype=np.int64)
+    total_samples = int(np.sum(cm))
+
+    for i, class_name in enumerate(class_names):
+        tp = int(cm[i, i])
+        fp = int(np.sum(cm[:, i]) - tp)
+        fn = int(np.sum(cm[i, :]) - tp)
+        tn = int(total_samples - tp - fp - fn)
+
+        per_class_confusion_counts[class_name] = {
+            "false_positive": fp,
+            "false_negative": fn,
+            "true_positive": tp,
+            "true_negative": tn,
+        }
+        one_vs_rest_count_matrix[i] = [fp, fn, tp, tn]
+
     return {
         "accuracy": float(accuracy),
         "macro_precision": float(macro_precision),
@@ -844,6 +863,14 @@ def compute_metrics(
         "weighted_f1": float(weighted_f1),
         "roc_auc_macro": float(roc_auc) if roc_auc is not None else None,
         "confusion_matrix": cm.tolist(),
+        "one_vs_rest_counts": per_class_confusion_counts,
+        "one_vs_rest_count_matrix": one_vs_rest_count_matrix.tolist(),
+        "one_vs_rest_count_matrix_columns": [
+            "false_positive",
+            "false_negative",
+            "true_positive",
+            "true_negative",
+        ],
         "per_class_metrics": per_class_metrics,
         "classification_report": report,
     }
@@ -900,6 +927,46 @@ def plot_confusion_matrix(
     plt.savefig(output_path, dpi=150, bbox_inches="tight")
     plt.close()
     logger.info(f"Saved confusion matrix to: {output_path}")
+
+
+def plot_one_vs_rest_count_matrix(
+    count_matrix: np.ndarray,
+    class_names: List[str],
+    output_path: Path,
+    columns: Optional[List[str]] = None,
+    figsize: Tuple[int, int] = (11, 8),
+) -> None:
+    """Plot one-vs-rest FP/FN/TP/TN exact count matrix for each class."""
+    plt.figure(figsize=figsize)
+
+    column_labels = columns or [
+        "false_positive",
+        "false_negative",
+        "true_positive",
+        "true_negative",
+    ]
+
+    sns.heatmap(
+        count_matrix.astype(np.int64),
+        annot=True,
+        fmt="d",
+        cmap="YlOrBr",
+        xticklabels=column_labels,
+        yticklabels=class_names,
+        linewidths=0.5,
+        cbar_kws={"label": "Count"},
+    )
+
+    plt.title("One-vs-Rest Confusion Counts", fontsize=14, fontweight="bold")
+    plt.ylabel("Class", fontsize=12)
+    plt.xlabel("Count Type", fontsize=12)
+    plt.xticks(rotation=20, ha="right")
+    plt.yticks(rotation=0)
+    plt.tight_layout()
+
+    plt.savefig(output_path, dpi=150, bbox_inches="tight")
+    plt.close()
+    logger.info(f"Saved one-vs-rest count matrix to: {output_path}")
 
 
 def plot_roc_curves(
@@ -1399,6 +1466,12 @@ def evaluate(
     plot_confusion_matrix(cm, class_names, output_dir / "confusion_matrix.png")
     plot_confusion_matrix(
         cm, class_names, output_dir / "confusion_matrix_raw.png", normalize=False
+    )
+    plot_one_vs_rest_count_matrix(
+        count_matrix=np.array(metrics["one_vs_rest_count_matrix"], dtype=np.int64),
+        class_names=class_names,
+        output_path=output_dir / "one_vs_rest_confusion_counts.png",
+        columns=metrics.get("one_vs_rest_count_matrix_columns"),
     )
 
     # ROC curves
