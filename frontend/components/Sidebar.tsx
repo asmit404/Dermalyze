@@ -140,7 +140,7 @@ const Sidebar: React.FC<SidebarProps> = ({ onLogout, mobileOpen, onMobileClose }
       <aside
         className={[
           // Base
-          'flex flex-col bg-white border-r border-slate-200 shadow-sm',
+          'flex flex-col bg-white border-r-2 border-slate-300 shadow-sm',
           'transition-[width,transform] duration-200 ease-in-out',
           // Mobile: fixed overlay; hidden until mobileOpen
           'fixed top-0 left-0 h-screen z-40',
@@ -154,7 +154,7 @@ const Sidebar: React.FC<SidebarProps> = ({ onLogout, mobileOpen, onMobileClose }
         {/* ── Logo + toggle ── */}
         <div
           className={[
-            'flex items-center border-b border-slate-100 h-[57px] px-3',
+            'flex items-center border-b border-slate-300 h-[57px] px-3',
             expanded ? 'justify-between' : 'justify-center',
           ].join(' ')}
         >
@@ -237,7 +237,7 @@ const Sidebar: React.FC<SidebarProps> = ({ onLogout, mobileOpen, onMobileClose }
         </nav>
 
         {/* ── Bottom: user chip + logout ── */}
-        <div className="px-2 py-3 border-t border-slate-100 space-y-0.5">
+        <div className="px-2 py-3 border-t border-slate-300 space-y-0.5">
           {expanded && userEmail && (
             <div className="flex items-center gap-2.5 px-3 py-2 mb-1 rounded-lg bg-slate-50">
               <div className="w-7 h-7 rounded-full bg-teal-100 flex items-center justify-center text-teal-700 text-[11px] font-bold shrink-0">

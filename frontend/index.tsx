@@ -3,6 +3,7 @@ import React from 'react';
 import ReactDOM from 'react-dom/client';
 import { BrowserRouter } from 'react-router-dom';
 import App from './App';
+import { DataCacheProvider } from './lib/dataCache';
 import './index.css';
 import '@fontsource/inter/300.css';
 import '@fontsource/inter/400.css';
@@ -19,7 +20,9 @@ const root = ReactDOM.createRoot(rootElement);
 root.render(
   <React.StrictMode>
     <BrowserRouter>
-      <App />
+      <DataCacheProvider>
+        <App />
+      </DataCacheProvider>
     </BrowserRouter>
   </React.StrictMode>
 );

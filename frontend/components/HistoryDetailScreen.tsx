@@ -4,6 +4,7 @@ import ProbabilityChart from './ui/ProbabilityChart';
 import MedicalInfoCard from './ui/MedicalInfoCard';
 import { classInfoMap } from '../lib/classInfo';
 import { supabase } from '../lib/supabase';
+import { generateDermatologyReport } from '../lib/pdfReportGenerator';
 import type { AnalysisHistoryItem } from '../lib/types';
 
 interface HistoryDetailScreenProps {
@@ -34,6 +35,8 @@ const HistoryDetailScreen: React.FC<HistoryDetailScreenProps> = ({ item, onBack 
   const [savingNote,  setSavingNote]  = useState(false);
   const [noteSaved,   setNoteSaved]   = useState(false);
   const [noteError,   setNoteError]   = useState<string | null>(null);
+  const [clinicianName, setClinicianName] = useState<string>('');
+  const [exportingPdf,  setExportingPdf]  = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
@@ -49,6 +52,18 @@ const HistoryDetailScreen: React.FC<HistoryDetailScreenProps> = ({ item, onBack 
   useEffect(() => {
     if (!editing) setNoteText(item?.notes ?? '');
   }, [item?.id, item?.notes]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Fetch clinician name for PDF report
+  useEffect(() => {
+    const fetchClinicianName = async () => {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (user) {
+        const name = user.user_metadata?.full_name || user.user_metadata?.name || user.email || 'Unknown';
+        setClinicianName(name);
+      }
+    };
+    fetchClinicianName();
+  }, []);
 
   if (!item) return null;
 
@@ -96,6 +111,28 @@ const HistoryDetailScreen: React.FC<HistoryDetailScreenProps> = ({ item, onBack 
       setNoteError(errorMessage);
     } finally {
       setSavingNote(false);
+    }
+  };
+
+  const exportPdf = async () => {
+    if (!item || !info) return;
+    setExportingPdf(true);
+    try {
+      await generateDermatologyReport({
+        caseId,
+        date: item.date,
+        time: item.time,
+        clinicianName: clinicianName || 'Unknown',
+        classId: item.classId,
+        className: item.className,
+        confidence: item.confidence,
+        classInfo: info,
+        allScores: classes,
+        notes: noteText || undefined,
+        imageDataUrl: item.imageUrl || undefined,
+      });
+    } finally {
+      setExportingPdf(false);
     }
   };
 
@@ -241,18 +278,44 @@ const HistoryDetailScreen: React.FC<HistoryDetailScreenProps> = ({ item, onBack 
           )}
         </section>
 
-        {/* Back to History — full width */}
-        <button
-          onClick={onBack}
-          className="w-full py-2.5 px-4 rounded-full font-medium text-sm border border-slate-200 text-slate-600 transition-all duration-200 hover:bg-teal-50 hover:border-teal-300 hover:text-teal-700 active:bg-teal-100 active:border-teal-400 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-teal-400"
-        >
-          <span className="flex items-center justify-center gap-2">
-            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 19l-7-7m0 0l7-7m-7 7h18" />
-            </svg>
-            Back to History
-          </span>
-        </button>
+        {/* Action buttons */}
+        <div className="flex flex-col gap-3">
+          <button
+            onClick={exportPdf}
+            disabled={exportingPdf}
+            className="w-full py-2.5 px-4 rounded-full font-medium text-sm border-2 border-teal-600 text-teal-700 bg-teal-50 transition-all duration-200 hover:bg-teal-100 hover:border-teal-700 active:bg-teal-200 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-teal-400 disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            <span className="flex items-center justify-center gap-2">
+              {exportingPdf ? (
+                <>
+                  <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24" fill="none">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                  </svg>
+                  Generating Report…
+                </>
+              ) : (
+                <>
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                  </svg>
+                  Download PDF Report
+                </>
+              )}
+            </span>
+          </button>
+          <button
+            onClick={onBack}
+            className="w-full py-2.5 px-4 rounded-full font-medium text-sm border border-slate-200 text-slate-600 transition-all duration-200 hover:bg-teal-50 hover:border-teal-300 hover:text-teal-700 active:bg-teal-100 active:border-teal-400 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-teal-400"
+          >
+            <span className="flex items-center justify-center gap-2">
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 19l-7-7m0 0l7-7m-7 7h18" />
+              </svg>
+              Back to History
+            </span>
+          </button>
+        </div>
       </main>
 
       {/* FOOTER — Clinical Disclaimer */}

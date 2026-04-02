@@ -17,6 +17,7 @@ const ProcessingScreen     = lazy(() => import('./components/ProcessingScreen'))
 const ResultsScreen        = lazy(() => import('./components/ResultsScreen'));
 const HistoryScreen        = lazy(() => import('./components/HistoryScreen'));
 const HistoryDetailScreen  = lazy(() => import('./components/HistoryDetailScreen'));
+const TrendsScreen         = lazy(() => import('./components/TrendsScreen'));
 const ErrorScreen          = lazy(() => import('./components/ErrorScreen'));
 const AboutScreen          = lazy(() => import('./components/AboutScreen'));
 const HelpScreen           = lazy(() => import('./components/HelpScreen'));
@@ -37,6 +38,7 @@ export const ROUTES = {
   results:           '/results',
   history:           '/history',
   historyDetail:     '/history/detail',
+  trends:            '/trends',
   error:             '/error',
   about:             '/about',
   help:              '/help',
@@ -249,6 +251,7 @@ const App: React.FC = () => {
                 <DashboardScreen
                   onNavigateToUpload={() => navigate(ROUTES.upload)}
                   onNavigateToHistory={() => navigate(ROUTES.history)}
+                  onNavigateToTrends={() => navigate(ROUTES.trends)}
                 />
               </AppLayout>
             } />
@@ -310,6 +313,11 @@ const App: React.FC = () => {
                 />
               </AppLayout>
               )
+            } />
+            <Route path={ROUTES.trends} element={
+              <AppLayout onLogout={handleRequestLogout}>
+                <TrendsScreen onBack={() => navigate(ROUTES.dashboard)} />
+              </AppLayout>
             } />
             <Route path={ROUTES.error} element={
               <AppLayout onLogout={handleRequestLogout}>

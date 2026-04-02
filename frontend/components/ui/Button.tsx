@@ -11,7 +11,7 @@ const Button: React.FC<ButtonProps> = ({ variant = 'primary', children, ...props
   
   const variants = {
     primary: "bg-teal-600 text-white hover:bg-teal-700 focus:ring-teal-500 shadow-sm",
-    secondary: "bg-transparent border border-slate-200 text-slate-600 hover:bg-slate-50 hover:text-slate-900 focus:ring-slate-200"
+    secondary: "bg-transparent border border-slate-300 text-slate-600 hover:bg-teal-50 hover:text-teal-700 hover:border-teal-300 focus:ring-teal-300"
   };
 
   return (

@@ -6,8 +6,9 @@ export interface ClassResult {
 
 export interface AnalysisHistoryItem {
   id: string;
-  date: string;
-  time: string;
+  createdAt: string; // ISO timestamp for calculations
+  date: string; // Formatted date for display
+  time: string; // Formatted time for display
   classId: string;
   className: string;
   confidence: number;

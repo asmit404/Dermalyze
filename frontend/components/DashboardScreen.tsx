@@ -1,12 +1,15 @@
 
-import React, { useState, useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import Button from './ui/Button';
+import { useDataCache } from '../lib/dataCache';
+import { getPredictionBreakdown } from '../lib/analyticsUtils';
+import type { AnalysisHistoryItem } from '../lib/types';
 import { supabase } from '../lib/supabase';
-import { decryptImage, blobToDataUrl } from '../lib/imageEncryption';
 
 interface DashboardScreenProps {
   onNavigateToUpload: () => void;
   onNavigateToHistory: () => void;
+  onNavigateToTrends: () => void;
 }
 
 // Classes that warrant clinical follow-up — kept for reference, filtering done server-side via RPC
@@ -18,17 +21,6 @@ const SHORT_CLASS_NAMES: Record<string, string> = {
   mel:   'Melanoma',
   nv:    'Melanocytic Nevi',
   vasc:  'Vascular Lesions',
-};
-
-// Bar colour per class — risk-coded
-const BAR_COLORS: Record<string, string> = {
-  mel:   'bg-red-400',
-  bcc:   'bg-orange-400',
-  akiec: 'bg-amber-400',
-  bkl:   'bg-teal-400',
-  df:    'bg-teal-400',
-  nv:    'bg-teal-400',
-  vasc:  'bg-teal-400',
 };
 
 const RISK_LABEL: Record<string, { label: string; cls: string }> = {
@@ -67,104 +59,49 @@ interface DashStats {
 const DashboardScreen: React.FC<DashboardScreenProps> = ({
   onNavigateToUpload,
   onNavigateToHistory,
+  onNavigateToTrends,
 }) => {
-  const [stats,    setStats]    = useState<DashStats | null>(null);
-  const [loading,  setLoading]  = useState(true);
-  const [fetchErr, setFetchErr] = useState(false);
-  const [userName, setUserName] = useState('');
+  const { dashboardStats, fetchDashboardStats, userName, userId } = useDataCache();
+  const { data: stats, loading, error: fetchErr } = dashboardStats;
+  const [timePeriod, setTimePeriod] = useState<'weekly' | 'monthly'>('weekly');
+  const [historyItems, setHistoryItems] = useState<AnalysisHistoryItem[]>([]);
 
   useEffect(() => {
-    const load = async () => {
+    fetchDashboardStats();
+  }, [fetchDashboardStats]);
+
+  // Fetch history items for time-series chart
+  useEffect(() => {
+    const fetchHistory = async () => {
+      if (!userId) return;
       try {
-        const { data: { user } } = await supabase.auth.getUser();
-        if (user) setUserName(user.user_metadata?.full_name?.split(' ')[0] ?? '');
+        const { data } = await supabase
+          .from('analyses')
+          .select('id, created_at, predicted_class_id, predicted_class_name, confidence')
+          .eq('user_id', userId)
+          .order('created_at', { ascending: false });
 
-        const [
-          { data: rpcData,  error: rpcErr },
-          { data: lastRows, error: lastErr },
-        ] = await Promise.all([
-          supabase.rpc('get_dashboard_stats'),
-          supabase
-            .from('analyses')
-            .select('predicted_class_id, predicted_class_name, confidence, created_at, image_url')
-            .eq('user_id', user?.id ?? '')
-            .order('created_at', { ascending: false })
-            .limit(1),
-        ]);
-
-        if (rpcErr || !rpcData) { setFetchErr(true); setLoading(false); return; }
-
-        const rpc  = rpcData as RpcResult;
-        const last = (!lastErr && lastRows && lastRows.length > 0) ? lastRows[0] : null;
-
-        let resolvedImageUrl: string | null = last?.image_url ?? null;
-        if (resolvedImageUrl && !resolvedImageUrl.startsWith('http') && user) {
-          try {
-            // Check if the file is encrypted (has .enc extension)
-            const isEncrypted = resolvedImageUrl.endsWith('.enc');
-
-            // Fetch signed URL
-            const { data: signed } = await supabase.storage
-              .from('analysis-images')
-              .createSignedUrl(resolvedImageUrl, 60 * 60); // 1-hour expiry
-
-            if (signed?.signedUrl) {
-              if (isEncrypted) {
-                // New encrypted images: fetch and decrypt
-                const response = await fetch(signed.signedUrl);
-                if (response.ok) {
-                  const encryptedBlob = await response.blob();
-                  // Decrypt and convert to data URL
-                  const decryptedBlob = await decryptImage(encryptedBlob, user.id, 'image/webp');
-                  resolvedImageUrl = await blobToDataUrl(decryptedBlob);
-                } else {
-                  resolvedImageUrl = null;
-                }
-              } else {
-                // Old unencrypted images: use signed URL directly
-                resolvedImageUrl = signed.signedUrl;
-              }
-            } else {
-              resolvedImageUrl = null;
-            }
-          } catch (err) {
-            console.error('Failed to process dashboard image:', err);
-            resolvedImageUrl = null;
-          }
+        if (data) {
+          setHistoryItems(data.map((row) => ({
+            id: row.id,
+            createdAt: row.created_at,
+            date: '',
+            time: '',
+            classId: row.predicted_class_id,
+            className: row.predicted_class_name,
+            confidence: row.confidence,
+          })));
         }
-
-        const lastAnalysis = last ? {
-          className:  SHORT_CLASS_NAMES[last.predicted_class_id] ?? last.predicted_class_name,
-          classId:    last.predicted_class_id,
-          confidence: last.confidence,
-          date: new Date(last.created_at).toLocaleDateString('en-GB', {
-            day: '2-digit', month: 'short', year: 'numeric',
-          }),
-          imageUrl: resolvedImageUrl,
-        } : null;
-
-        const classCounts = (rpc.class_counts ?? []).map(c => ({
-          id:    c.id,
-          name:  SHORT_CLASS_NAMES[c.id] ?? c.name,
-          count: c.count,
-        }));
-
-        setStats({
-          total:         rpc.total,
-          thisMonth:     rpc.this_month,
-          avgConfidence: rpc.avg_confidence,
-          needsReview:   rpc.needs_review,
-          classCounts,
-          lastAnalysis,
-        });
-      } catch {
-        setFetchErr(true);
-      } finally {
-        setLoading(false);
+      } catch (err) {
+        console.error('Failed to fetch history for chart:', err);
       }
     };
-    load();
-  }, []);
+
+    fetchHistory();
+  }, [userId]);
+
+  // Get prediction breakdown data for the selected time period
+  const predictionBreakdownData = getPredictionBreakdown(historyItems, timePeriod);
 
   const greeting = () => {
     const h = new Date().getHours();
@@ -192,8 +129,6 @@ const DashboardScreen: React.FC<DashboardScreenProps> = ({
       </div>
     );
   }
-
-  const maxCount = stats ? Math.max(...stats.classCounts.map(c => c.count), 1) : 1;
 
   // ── Fetch error state ───────────────────────────────────────────────────
   if (fetchErr) {
@@ -256,19 +191,19 @@ const DashboardScreen: React.FC<DashboardScreenProps> = ({
         {/* ── Stat strip ── */}
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
           {/* Total */}
-          <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5">
+          <div className="bg-white rounded-2xl border border-slate-300 shadow-sm p-5">
             <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Total Analyses</p>
             <p className="text-3xl font-bold text-slate-900 tracking-tight">{stats.total}</p>
           </div>
 
           {/* This month */}
-          <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5">
+          <div className="bg-white rounded-2xl border border-slate-300 shadow-sm p-5">
             <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">This Month</p>
             <p className="text-3xl font-bold text-teal-600 tracking-tight">{stats.thisMonth}</p>
           </div>
 
           {/* Avg confidence */}
-          <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5">
+          <div className="bg-white rounded-2xl border border-slate-300 shadow-sm p-5">
             <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Avg Confidence</p>
             <p className={[
               'text-3xl font-bold tracking-tight',
@@ -283,7 +218,7 @@ const DashboardScreen: React.FC<DashboardScreenProps> = ({
           {/* Needs review */}
           <div className={[
             'rounded-2xl border shadow-sm p-5',
-            stats.needsReview > 0 ? 'bg-amber-50 border-amber-200' : 'bg-white border-slate-200',
+            stats.needsReview > 0 ? 'bg-amber-50 border-amber-300' : 'bg-white border-slate-200',
           ].join(' ')}>
             <p className={[
               'text-[10px] font-bold uppercase tracking-widest mb-1',
@@ -302,30 +237,81 @@ const DashboardScreen: React.FC<DashboardScreenProps> = ({
         {/* ── Main grid ── */}
         <div className="grid grid-cols-1 lg:grid-cols-5 gap-6">
 
-          {/* Class distribution */}
-          <div className="lg:col-span-3 bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
-            <h2 className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-5">
-              Prediction Breakdown
-            </h2>
-            {stats.classCounts.length === 0 ? (
-              <p className="text-sm text-slate-400">No data yet.</p>
+          {/* Prediction breakdown - Vertical Bar Chart */}
+          <div className="lg:col-span-3 bg-white rounded-2xl border border-slate-300 shadow-sm p-6">
+            <div className="flex items-center justify-between mb-5">
+              <h2 className="text-xs font-bold text-slate-400 uppercase tracking-widest">
+                Prediction Breakdown
+              </h2>
+              {/* Weekly/Monthly Toggle */}
+              <div className="flex items-center gap-1 bg-slate-300 rounded-lg p-0.5">
+                <button
+                  onClick={() => setTimePeriod('weekly')}
+                  className={[
+                    'px-3 py-1 text-xs font-semibold rounded-md transition-colors',
+                    timePeriod === 'weekly'
+                      ? 'bg-white text-slate-700 shadow-sm'
+                      : 'text-slate-500 hover:text-slate-700',
+                  ].join(' ')}
+                >
+                  Weekly
+                </button>
+                <button
+                  onClick={() => setTimePeriod('monthly')}
+                  className={[
+                    'px-3 py-1 text-xs font-semibold rounded-md transition-colors',
+                    timePeriod === 'monthly'
+                      ? 'bg-white text-slate-700 shadow-sm'
+                      : 'text-slate-500 hover:text-slate-700',
+                  ].join(' ')}
+                >
+                  Monthly
+                </button>
+              </div>
+            </div>
+
+            {predictionBreakdownData.length === 0 ? (
+              <div className="flex items-center justify-center h-48 text-slate-400 text-sm">
+                No data yet.
+              </div>
             ) : (
-              <ul className="space-y-3">
-                {stats.classCounts.map(c => (
-                  <li key={c.id}>
-                    <div className="flex items-center justify-between mb-1">
-                      <span className="text-sm font-medium text-slate-700 truncate pr-3">{c.name}</span>
-                      <span className="text-xs font-bold text-slate-500 tabular-nums shrink-0">{c.count}</span>
-                    </div>
-                    <div className="h-2 rounded-full bg-slate-100 overflow-hidden">
+              <div className="flex items-end justify-between gap-3" style={{ height: 180 }}>
+                {predictionBreakdownData.map((item) => {
+                  const maxValue = Math.max(...predictionBreakdownData.map((d) => d.value), 1);
+                  const barHeight = maxValue > 0 ? (item.value / maxValue) * 100 : 0;
+
+                  return (
+                    <div
+                      key={item.id}
+                      className="flex-1 flex flex-col items-center justify-end h-full min-w-0"
+                    >
+                      {/* Value label */}
+                      {item.value > 0 && (
+                        <span className="text-xs font-semibold text-slate-600 mb-1 tabular-nums">
+                          {item.value}
+                        </span>
+                      )}
+
+                      {/* Bar */}
                       <div
-                        className={['h-full rounded-full transition-all duration-500', BAR_COLORS[c.id] ?? 'bg-teal-400'].join(' ')}
-                        style={{ width: `${Math.round((c.count / maxCount) * 100)}%` }}
+                        className="w-full max-w-[36px] rounded-t-lg transition-all duration-500 hover:opacity-80"
+                        style={{
+                          height: `${Math.max(barHeight, 4)}%`,
+                          backgroundColor: item.color,
+                          minHeight: item.value > 0 ? '8px' : '2px',
+                        }}
                       />
+
+                      {/* Label */}
+                      <div className="mt-2 w-full text-center">
+                        <span className="text-[10px] font-medium text-slate-500 leading-tight block truncate">
+                          {item.label}
+                        </span>
+                      </div>
                     </div>
-                  </li>
-                ))}
-              </ul>
+                  );
+                })}
+              </div>
             )}
           </div>
 
@@ -334,13 +320,13 @@ const DashboardScreen: React.FC<DashboardScreenProps> = ({
 
             {/* Last analysis */}
             {stats.lastAnalysis && (
-              <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5">
-                <h2 className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-4">
+              <div className="bg-white rounded-2xl border border-slate-300 shadow-sm p-5">
+                <h2 className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-4">
                   Last Analysis
                 </h2>
                 <div className="flex items-start gap-4">
                   {/* Thumbnail */}
-                  <div className="w-14 h-14 rounded-xl bg-slate-100 border border-slate-200 overflow-hidden shrink-0 flex items-center justify-center text-slate-300">
+                  <div className="w-14 h-14 rounded-xl bg-slate-200 border border-slate-200 overflow-hidden shrink-0 flex items-center justify-center text-slate-300">
                     {stats.lastAnalysis.imageUrl ? (
                       <img
                         src={stats.lastAnalysis.imageUrl}
@@ -401,6 +387,14 @@ const DashboardScreen: React.FC<DashboardScreenProps> = ({
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 002 2h2a2 2 0 002-2" />
                   </svg>
                   View History
+                </div>
+              </Button>
+              <Button variant="secondary" onClick={onNavigateToTrends}>
+                <div className="flex items-center justify-center gap-2">
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+                  </svg>
+                  View Trends
                 </div>
               </Button>
             </div>

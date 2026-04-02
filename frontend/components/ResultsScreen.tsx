@@ -7,6 +7,8 @@ import { classInfoMap } from '../lib/classInfo';
 import { supabase } from '../lib/supabase';
 import { optimizeImage } from '../lib/imageOptimization';
 import { encryptImage, getEncryptedExtension } from '../lib/imageEncryption';
+import { useDataCache } from '../lib/dataCache';
+import { generateDermatologyReport } from '../lib/pdfReportGenerator';
 import type { ClassResult } from '../lib/types';
 
 interface ResultsScreenProps {
@@ -63,6 +65,7 @@ const ResultsScreen: React.FC<ResultsScreenProps> = ({
   onAnalyzeAnother,
   onNavigateToHistory,
 }) => {
+  const { invalidateAll } = useDataCache();
   const [loading, setLoading] = useState(true);
   const [saveFailed,     setSaveFailed]     = useState(false);
   const [saveCompleted,  setSaveCompleted]  = useState(false);
@@ -70,11 +73,26 @@ const ResultsScreen: React.FC<ResultsScreenProps> = ({
   const [savingNote,     setSavingNote]     = useState(false);
   const [noteSaved,      setNoteSaved]      = useState(false);
   const [noteError,      setNoteError]      = useState<string | null>(null);
+  const [clinicianName,  setClinicianName]  = useState<string>('');
+  const [exportingPdf,   setExportingPdf]   = useState(false);
 
   // Doherty Threshold: skeleton -> content in < 400ms
   useEffect(() => {
     const timer = setTimeout(() => setLoading(false), 350);
     return () => clearTimeout(timer);
+  }, []);
+
+  // Fetch clinician name for PDF report
+  useEffect(() => {
+    const fetchClinicianName = async () => {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (user) {
+        // Prefer display name from metadata, fallback to email
+        const name = user.user_metadata?.full_name || user.user_metadata?.name || user.email || 'Unknown';
+        setClinicianName(name);
+      }
+    };
+    fetchClinicianName();
   }, []);
 
   // Use real results from the API; empty array fallback keeps the UI safe
@@ -146,6 +164,8 @@ const ResultsScreen: React.FC<ResultsScreenProps> = ({
         });
         if (insertErr) throw insertErr;
         setSaveCompleted(true);
+        // Invalidate cache so dashboard and history will fetch fresh data
+        invalidateAll();
       } catch {
         // Non-blocking — show a banner so the user knows the record was not saved.
         setSaveFailed(true);
@@ -185,6 +205,27 @@ const ResultsScreen: React.FC<ResultsScreenProps> = ({
       setNoteError(errorMessage);
     } finally {
       setSavingNote(false);
+    }
+  };
+
+  const exportPdf = async () => {
+    if (!predictedClass || !info) return;
+    setExportingPdf(true);
+    try {
+      await generateDermatologyReport({
+        caseId: caseIdDisplay,
+        date: analysisDate,
+        clinicianName: clinicianName || 'Unknown',
+        classId: predictedClass.id,
+        className: predictedClass.name,
+        confidence: predictedClass.score,
+        classInfo: info,
+        allScores: classes,
+        notes: noteText,
+        imageDataUrl: image || undefined,
+      });
+    } finally {
+      setExportingPdf(false);
     }
   };
 
@@ -301,6 +342,30 @@ const ResultsScreen: React.FC<ResultsScreenProps> = ({
 
         {/* Action buttons — full width */}
         <div className="flex flex-col gap-3">
+          <button
+            onClick={exportPdf}
+            disabled={exportingPdf}
+            className="w-full py-2.5 px-4 rounded-full font-medium text-sm border-2 border-teal-600 text-teal-700 bg-teal-50 transition-all duration-200 hover:bg-teal-100 hover:border-teal-700 active:bg-teal-200 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-teal-400 disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            <span className="flex items-center justify-center gap-2">
+              {exportingPdf ? (
+                <>
+                  <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24" fill="none">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                  </svg>
+                  Generating Report…
+                </>
+              ) : (
+                <>
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                  </svg>
+                  Download PDF Report
+                </>
+              )}
+            </span>
+          </button>
           <Button onClick={onAnalyzeAnother}>
             <span className="flex items-center justify-center gap-2">
               <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
