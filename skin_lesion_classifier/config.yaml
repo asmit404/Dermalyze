@@ -24,11 +24,20 @@ data:
   use_metadata: true
   metadata_columns: [age_approx, anatom_site, sex]
 
+  # Segmentation-Assisted ROI Crop (Optional)
+  segmentation:
+    enabled: true
+    masks_dir: data/HAM10000_Segmentations
+    required: true
+    mask_threshold: 10
+    crop_margin: 0.10
+    filename_suffixes: ["", "_segmentation", "_mask"]
+
 # -----------------------------------------------------------------------------
 # Model Configuration
 # -----------------------------------------------------------------------------
 model:
-  backbone: ResNeSt-101
+  backbone: efficientnetv2_s
   num_classes: 7
   image_size: 224
   pretrained: true
@@ -71,7 +80,7 @@ training:
   mixup_alpha: 0.0
   cutmix_alpha: 0.0
   mixup_prob: 0.0
-  cutmix_prob: 0.15
+  cutmix_prob: 0.0
 
   # Learning Rate Scheduler
   scheduler:

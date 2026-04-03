@@ -21,8 +21,10 @@ try:
         IMAGENET_STD,
         preprocess_image,
     )
+    from .metadata_encoder import MetadataEncoder
     from .models.convnext import SkinLesionConvNeXtClassifier
-    from .models.efficientnet import SkinLesionClassifier
+    from .models.efficientnet import SkinLesionClassifier, normalize_efficientnet_variant
+    from .models.multi_input import MultiInputClassifier
     from .tta_constants import TTA_AUG_COUNTS
 except ImportError:
     from metadata import (
@@ -32,8 +34,10 @@ except ImportError:
         IMAGENET_STD,
         preprocess_image,
     )
+    from metadata_encoder import MetadataEncoder
     from models.convnext import SkinLesionConvNeXtClassifier
-    from models.efficientnet import SkinLesionClassifier
+    from models.efficientnet import SkinLesionClassifier, normalize_efficientnet_variant
+    from models.multi_input import MultiInputClassifier
     from tta_constants import TTA_AUG_COUNTS
 
 try:
@@ -196,13 +200,25 @@ class SkinLesionPredictor:
         else:
             self.device = torch.device(device)
 
-        self.model, self.config = self._load_model()
+        self.model, self.config, self.metadata_encoder = self._load_model()
+        self.uses_metadata = self.metadata_encoder is not None
         self.class_names = list(sorted(CLASS_LABELS.keys()))
         self.class_descriptions = CLASS_LABELS
 
+    @staticmethod
+    def _normalize_backbone(backbone: str) -> str:
+        normalized = str(backbone or "efficientnet_b0").strip().lower().replace("-", "_")
+        alias_map = {
+            "convnext": "convnext_tiny",
+            "efficientnet": "efficientnet_b0",
+        }
+        return alias_map.get(normalized, normalized)
+
     def _build_model(self, model_config: Dict[str, Any]) -> nn.Module:
         """Create model architecture that matches checkpoint training config."""
-        backbone = str(model_config.get("backbone", "efficientnet_b0")).lower()
+        backbone = self._normalize_backbone(
+            str(model_config.get("backbone", "efficientnet_b0"))
+        )
         num_classes = int(model_config.get("num_classes", 7))
         dropout_rate = float(model_config.get("dropout_rate", 0.3))
 
@@ -213,25 +229,66 @@ class SkinLesionPredictor:
                 dropout_rate=dropout_rate,
             )
 
-        return SkinLesionClassifier(
-            num_classes=num_classes,
-            pretrained=False,
-            dropout_rate=dropout_rate,
+        if backbone.startswith("efficientnet"):
+            return SkinLesionClassifier(
+                num_classes=num_classes,
+                pretrained=False,
+                dropout_rate=dropout_rate,
+                backbone_variant=normalize_efficientnet_variant(backbone),
+            )
+
+        raise ValueError(
+            "Unsupported backbone for inference service: "
+            f"{backbone!r}. Supported: convnext_tiny and EfficientNet variants."
         )
 
-    def _load_model(self) -> Tuple[nn.Module, Dict[str, Any]]:
+    def _load_model(self) -> Tuple[nn.Module, Dict[str, Any], Optional[MetadataEncoder]]:
         if not self.checkpoint_path.exists():
             raise FileNotFoundError(f"Checkpoint not found: {self.checkpoint_path}")
 
         checkpoint = torch.load(self.checkpoint_path, map_location=self.device, weights_only=False)
         config = checkpoint.get("config", {})
         model_config = config.get("model", {})
+        metadata_encoder_state = checkpoint.get("metadata_encoder_state")
 
-        model = self._build_model(model_config)
+        image_model = self._build_model(model_config)
+        metadata_encoder: Optional[MetadataEncoder] = None
+
+        if isinstance(metadata_encoder_state, dict):
+            metadata_encoder = MetadataEncoder.from_state(metadata_encoder_state)
+            model = MultiInputClassifier(
+                image_model=image_model,
+                metadata_dim=metadata_encoder.get_metadata_dim(),
+                num_classes=int(model_config.get("num_classes", 7)),
+                metadata_hidden_dim=int(model_config.get("metadata_hidden_dim", 64)),
+                fusion_hidden_dim=int(model_config.get("fusion_hidden_dim", 256)),
+                dropout_rate=float(model_config.get("dropout_rate", 0.3)),
+            )
+        else:
+            model = image_model
+
         model.load_state_dict(checkpoint["model_state_dict"])
         model = model.to(self.device)
         model.eval()
-        return model, config
+        return model, config, metadata_encoder
+
+    def _prepare_metadata_tensor(
+        self,
+        metadata: Optional[Dict[str, Any]],
+    ) -> Optional[torch.Tensor]:
+        if self.metadata_encoder is None or metadata is None:
+            return None
+        metadata_tensor = self.metadata_encoder.encode_metadata_dict(metadata)
+        return metadata_tensor.unsqueeze(0).to(self.device)
+
+    def _forward_model(
+        self,
+        image_tensor: torch.Tensor,
+        metadata_tensor: Optional[torch.Tensor],
+    ) -> torch.Tensor:
+        if self.uses_metadata:
+            return self.model(image_tensor, metadata_tensor)
+        return self.model(image_tensor)
 
     def preprocess(self, image: Union[str, Path, Image.Image, np.ndarray, bytes]) -> torch.Tensor:
         if isinstance(image, bytes):
@@ -242,11 +299,13 @@ class SkinLesionPredictor:
     def predict(
         self,
         image: Union[str, Path, Image.Image, np.ndarray, bytes],
+        metadata: Optional[Dict[str, Any]] = None,
         top_k: int = 3,
         include_disclaimer: bool = True,
     ) -> Dict[str, Any]:
         tensor = self.preprocess(image)
-        logits = self.model(tensor)
+        metadata_tensor = self._prepare_metadata_tensor(metadata)
+        logits = self._forward_model(tensor, metadata_tensor)
         probs = F.softmax(logits, dim=1)[0]
 
         if self.device.type == "mps":
@@ -287,6 +346,7 @@ class SkinLesionPredictor:
     def predict_with_tta(
         self,
         image: Union[str, Path, Image.Image, np.ndarray, bytes],
+        metadata: Optional[Dict[str, Any]] = None,
         tta_mode: Literal["light", "medium", "full"] = "medium",
         aggregation: Literal["mean", "geometric_mean", "max"] = "mean",
         use_clahe_tta: bool = False,
@@ -319,10 +379,12 @@ class SkinLesionPredictor:
                 "Install opencv-python or opencv-python-headless."
             )
 
+        metadata_tensor = self._prepare_metadata_tensor(metadata)
+
         probs_collection = []
         for transform in tta_transforms:
             tensor = transform(image).unsqueeze(0).to(self.device)
-            logits = self.model(tensor)
+            logits = self._forward_model(tensor, metadata_tensor)
             probs_collection.append(F.softmax(logits, dim=1)[0].cpu().numpy())
 
         if use_clahe_tta:
@@ -333,7 +395,7 @@ class SkinLesionPredictor:
             )
             base_transform = get_base_tta_transform(self.image_size)
             tensor = base_transform(clahe_image).unsqueeze(0).to(self.device)
-            logits = self.model(tensor)
+            logits = self._forward_model(tensor, metadata_tensor)
             probs_collection.append(F.softmax(logits, dim=1)[0].cpu().numpy())
 
         probs_array = np.array(probs_collection)

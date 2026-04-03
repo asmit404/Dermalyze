@@ -8,8 +8,10 @@ Standalone FastAPI inference API for Dermalyze. This service is intentionally de
 
 - Framework: FastAPI
 - Checkpoint loading: local `.pt` checkpoint
-- Supported model architectures in this package: EfficientNet-B0 and ConvNeXt-Tiny
+- Supported model architectures in this package: ConvNeXt-Tiny and torchvision EfficientNet variants (`efficientnet_b0`-`efficientnet_b7`, `efficientnetv2_s`, `efficientnetv2_m`, `efficientnetv2_l`)
 - Output classes: 7 lesion classes (`akiec`, `bcc`, `bkl`, `df`, `mel`, `nv`, `vasc`)
+
+Metadata-fusion checkpoints are supported. If a checkpoint contains `metadata_encoder_state`, the predictor automatically instantiates the multi-input fusion model.
 
 ## Quick Start
 
@@ -63,8 +65,11 @@ Request:
 - method: `POST /classify`
 - content type: `multipart/form-data`
 - file field: `file`
+- optional metadata fields: `age_approx` (number), `sex` (string), `anatom_site` (string), `localization` (string alias)
 - accepted MIME types: `image/jpeg`, `image/png`, `image/webp`
 - max file size: 10 MB
+
+If metadata is omitted for a metadata-fusion checkpoint, inference still runs using default/zero metadata features.
 
 Response:
 

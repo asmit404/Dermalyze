@@ -106,7 +106,8 @@ This document explains all supported parameters in `config.yaml`, including vali
 
 - **Type:** bool
 - **Default:** `false`
-- **Description:** Enables lesion ROI cropping using segmentation masks before image transforms.
+- **Description:** Master switch for lesion ROI cropping using segmentation masks before image transforms.
+- **Behavior:** ROI crop is applied only when this is `true`.
 
 ### `data.segmentation.masks_dir`
 
@@ -118,8 +119,11 @@ This document explains all supported parameters in `config.yaml`, including vali
 
 - **Type:** bool
 - **Default:** `true`
-- **Description:** If true, every sample must have a mask; missing masks raise an error.
-- **Notes:** If false, samples without masks fall back to uncropped images.
+- **Description:** Strictness flag for mask availability when ROI crop is enabled.
+- **Behavior:**
+  - If `data.segmentation.enabled: true` and `required: true`, every sample must have a mask; missing masks raise an error.
+  - If `data.segmentation.enabled: true` and `required: false`, samples without masks fall back to uncropped images.
+  - If `data.segmentation.enabled: false`, `required` is ignored (and train/eval log a warning when set to true).
 
 ### `data.segmentation.mask_threshold`
 

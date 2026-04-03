@@ -825,10 +825,14 @@ def train(
     )
 
     segmentation_config = data_config.get("segmentation", {})
+    segmentation_enabled = bool(segmentation_config.get("enabled", False))
     segmentation_required = bool(segmentation_config.get("required", False))
-    use_segmentation_roi_crop = bool(
-        segmentation_config.get("enabled", False) or segmentation_required
-    )
+    use_segmentation_roi_crop = segmentation_enabled
+    if segmentation_required and not segmentation_enabled:
+        logger.warning(
+            "data.segmentation.required=true is ignored because data.segmentation.enabled=false"
+        )
+    segmentation_required = segmentation_required and segmentation_enabled
     segmentation_mask_threshold = int(segmentation_config.get("mask_threshold", 10))
     segmentation_crop_margin = float(segmentation_config.get("crop_margin", 0.1))
 

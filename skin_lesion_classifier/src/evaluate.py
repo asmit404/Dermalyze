@@ -1253,7 +1253,7 @@ def evaluate(
         use_segmentation_roi_crop: Whether to crop images around lesion ROI from masks
         segmentation_mask_threshold: Pixel threshold used to binarize masks
         segmentation_crop_margin: Margin around lesion ROI as a fraction
-        segmentation_required: Whether every image must have a mask
+        segmentation_required: Whether every image must have a mask when ROI crop is enabled
         segmentation_mask_suffixes: Optional list of mask filename suffixes
 
     Returns:
@@ -1350,8 +1350,12 @@ def evaluate(
         if use_segmentation_roi_crop is not None
         else bool(segmentation_config.get("enabled", False))
     )
-    resolved_use_segmentation = (
-        resolved_use_segmentation or resolved_segmentation_required
+    if resolved_segmentation_required and not resolved_use_segmentation:
+        logger.warning(
+            "segmentation_required=true is ignored because segmentation ROI crop is disabled"
+        )
+    resolved_segmentation_required = (
+        resolved_segmentation_required and resolved_use_segmentation
     )
 
     resolved_segmentation_threshold = (
@@ -1767,7 +1771,7 @@ def main() -> None:
         "--segmentation-required",
         action=argparse.BooleanOptionalAction,
         default=None,
-        help="Require segmentation mask for every evaluated sample",
+        help="Require segmentation mask for every evaluated sample when ROI crop is enabled",
     )
     parser.add_argument(
         "--segmentation-mask-suffixes",
@@ -1889,7 +1893,7 @@ def main() -> None:
     )
 
     masks_dir = args.masks_dir
-    if masks_dir is None and (use_segmentation_roi_crop or segmentation_required):
+    if masks_dir is None and use_segmentation_roi_crop:
         cfg_masks_dir = segmentation_defaults.get("masks_dir")
         if cfg_masks_dir:
             masks_dir = _resolve_project_path(Path(str(cfg_masks_dir)))

@@ -7,9 +7,9 @@ import importlib
 import logging
 import os
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict, List, Optional
 
-from fastapi import Depends, FastAPI, File, HTTPException, Request, UploadFile
+from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel
@@ -422,6 +422,10 @@ def health() -> dict:
 async def classify_image(
     request: Request,
     file: UploadFile = File(...),
+    age_approx: Optional[float] = Form(None),
+    sex: Optional[str] = Form(None),
+    anatom_site: Optional[str] = Form(None),
+    localization: Optional[str] = Form(None),
     user: dict = Depends(verify_jwt_token)
 ) -> ClassifyResponse:
     declared_content_type = (file.content_type or "application/octet-stream").lower()
@@ -446,15 +450,36 @@ async def classify_image(
 
     try:
         predictor = _get_predictor()
+        metadata_payload: dict | None = None
+        if (
+            age_approx is not None
+            or sex is not None
+            or anatom_site is not None
+            or localization is not None
+        ):
+            resolved_site = localization if localization is not None else anatom_site
+            metadata_payload = {
+                "age": age_approx,
+                "age_approx": age_approx,
+                "sex": sex,
+                "anatom_site": resolved_site,
+                "localization": resolved_site,
+            }
+
         if USE_TTA:
             prediction = predictor.predict_with_tta(
                 image=image_bytes,
+                metadata=metadata_payload,
                 tta_mode=TTA_MODE,
                 aggregation=TTA_AGGREGATION,
                 include_disclaimer=False,
             )
         else:
-            prediction = predictor.predict(image=image_bytes, include_disclaimer=False)
+            prediction = predictor.predict(
+                image=image_bytes,
+                metadata=metadata_payload,
+                include_disclaimer=False,
+            )
 
         probs = prediction.get("probabilities")
         if not isinstance(probs, dict):
