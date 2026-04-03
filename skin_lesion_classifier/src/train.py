@@ -21,31 +21,28 @@ import sys
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, Optional, Tuple, cast
 
 import numpy as np
 import torch
 import torch.nn as nn
+import yaml
 from torch.amp import GradScaler, autocast
 from torch.optim import AdamW
 from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts, OneCycleLR
 from torch.utils.data import DataLoader
 from tqdm import tqdm
-import yaml
 
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from src.data.dataset import (
-    load_and_split_data,
     create_dataloaders,
     get_class_weights_for_loss,
-    CLASS_LABELS,
-    IDX_TO_LABEL,
+    load_and_split_data,
 )
 from src.data.metadata_encoder import MetadataEncoder
 from src.models.multi_input import create_multi_input_model
-
 
 # Configure logging
 logging.basicConfig(
@@ -179,17 +176,32 @@ def resolve_backbone_factories(backbone: str) -> Tuple[Any, Any, str, str]:
     if normalized in {"efficientnetv2_s", "efficientnet_v2_s", "efficientnet-v2-s"}:
         from src.models.efficientnetv2_s import create_model_v2s, get_loss_function
 
-        return create_model_v2s, get_loss_function, "efficientnetv2_s", "EfficientNetV2-S"
+        return (
+            create_model_v2s,
+            get_loss_function,
+            "efficientnetv2_s",
+            "EfficientNetV2-S",
+        )
 
     if normalized in {"efficientnetv2_m", "efficientnet_v2_m", "efficientnet-v2-m"}:
         from src.models.efficientnetv2_m import create_model_v2m, get_loss_function
 
-        return create_model_v2m, get_loss_function, "efficientnetv2_m", "EfficientNetV2-M"
+        return (
+            create_model_v2m,
+            get_loss_function,
+            "efficientnetv2_m",
+            "EfficientNetV2-M",
+        )
 
     if normalized in {"efficientnetv2_l", "efficientnet_v2_l", "efficientnet-v2-l"}:
         from src.models.efficientnetv2_l import create_model_v2l, get_loss_function
 
-        return create_model_v2l, get_loss_function, "efficientnetv2_l", "EfficientNetV2-L"
+        return (
+            create_model_v2l,
+            get_loss_function,
+            "efficientnetv2_l",
+            "EfficientNetV2-L",
+        )
 
     if normalized in {"convnext", "convnext_tiny", "convnext-tiny"}:
         from src.models.convnext import create_model, get_loss_function
@@ -201,16 +213,31 @@ def resolve_backbone_factories(backbone: str) -> Tuple[Any, Any, str, str]:
 
         return create_model_resnest101, get_loss_function, "resnest_101", "ResNeSt-101"
 
-    if normalized in {"seresnext101", "seresnext-101", "seresnext_101", "se-resnext-101", "se_resnext_101"}:
-        from src.models.seresnext_101 import create_model_seresnext101, get_loss_function
+    if normalized in {
+        "seresnext101",
+        "seresnext-101",
+        "seresnext_101",
+        "se-resnext-101",
+        "se_resnext_101",
+    }:
+        from src.models.seresnext_101 import (
+            create_model_seresnext101,
+            get_loss_function,
+        )
 
-        return create_model_seresnext101, get_loss_function, "seresnext_101", "SE-ResNeXt-101"
+        return (
+            create_model_seresnext101,
+            get_loss_function,
+            "seresnext_101",
+            "SE-ResNeXt-101",
+        )
 
     raise ValueError(
         "Unsupported model.backbone=%r. Supported values: efficientnet_b0, "
         "efficientnet_b1, efficientnet_b2, efficientnet_b3, efficientnet_b4, "
         "efficientnet_b5, efficientnet_b6, efficientnet_b7, efficientnetv2_s, "
-        "efficientnetv2_m, efficientnetv2_l, convnext_tiny, resnest_101, seresnext_101." % backbone
+        "efficientnetv2_m, efficientnetv2_l, convnext_tiny, resnest_101, seresnext_101."
+        % backbone
     )
 
 
@@ -359,10 +386,17 @@ def _parse_batch(
 ) -> Tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor]]:
     """Parse a dataloader batch that may include metadata."""
     if len(batch) == 3:
-        images, targets, metadata = batch
+        batch_with_metadata = cast(
+            Tuple[torch.Tensor, torch.Tensor, torch.Tensor],
+            batch,
+        )
+        images, targets, metadata = batch_with_metadata
         return images, targets, metadata
-    images, targets = batch
-    return images, targets, None
+    if len(batch) == 2:
+        batch_without_metadata = cast(Tuple[torch.Tensor, torch.Tensor], batch)
+        images, targets = batch_without_metadata
+        return images, targets, None
+    raise ValueError(f"Unexpected batch format with length={len(batch)}")
 
 
 def _forward_model(
@@ -378,21 +412,28 @@ def _forward_model(
 
 def _resolve_backbone_module(model: nn.Module) -> Optional[nn.Module]:
     """Resolve backbone module for freezing/unfreezing across model variants."""
-    if hasattr(model, "backbone"):
-        return model.backbone
-    if hasattr(model, "image_model") and hasattr(model.image_model, "backbone"):
-        return model.image_model.backbone
+    backbone = getattr(model, "backbone", None)
+    if isinstance(backbone, nn.Module):
+        return backbone
+
+    image_model = getattr(model, "image_model", None)
+    if isinstance(image_model, nn.Module):
+        nested_backbone = getattr(image_model, "backbone", None)
+        if isinstance(nested_backbone, nn.Module):
+            return nested_backbone
     return None
 
 
 def _resolve_stage1_params(model: nn.Module) -> Any:
     """Resolve trainable parameters for stage-1 warmup."""
-    if hasattr(model, "metadata_mlp") and hasattr(model, "fusion_classifier"):
-        return list(model.metadata_mlp.parameters()) + list(
-            model.fusion_classifier.parameters()
-        )
-    if hasattr(model, "classifier"):
-        return model.classifier.parameters()
+    metadata_mlp = getattr(model, "metadata_mlp", None)
+    fusion_classifier = getattr(model, "fusion_classifier", None)
+    if isinstance(metadata_mlp, nn.Module) and isinstance(fusion_classifier, nn.Module):
+        return list(metadata_mlp.parameters()) + list(fusion_classifier.parameters())
+
+    classifier = getattr(model, "classifier", None)
+    if isinstance(classifier, nn.Module):
+        return classifier.parameters()
     return model.parameters()
 
 
@@ -456,7 +497,11 @@ def train_one_epoch(
             metadata = metadata.to(device, non_blocking=True)
 
         use_mix = False
-        if metadata is None and (mixup_alpha > 0 or cutmix_alpha > 0) and np.random.rand() < mixup_prob:
+        if (
+            metadata is None
+            and (mixup_alpha > 0 or cutmix_alpha > 0)
+            and np.random.rand() < mixup_prob
+        ):
             if cutmix_alpha > 0 and (
                 mixup_alpha <= 0 or np.random.rand() < cutmix_prob
             ):
@@ -703,7 +748,9 @@ def load_checkpoint(
     scheduler: Optional[Any] = None,
 ) -> Tuple[int, Dict[str, float]]:
     """Load model checkpoint."""
-    checkpoint = torch.load(str(checkpoint_path), map_location="cpu", weights_only=False)
+    checkpoint = torch.load(
+        str(checkpoint_path), map_location="cpu", weights_only=False
+    )
 
     model.load_state_dict(checkpoint["model_state_dict"])
 
@@ -744,6 +791,13 @@ def train(
 
     # Get data paths from config
     data_config = config.get("data", {})
+    project_root = Path(__file__).resolve().parent.parent
+
+    def _resolve_project_path(path_value: Path) -> Path:
+        if path_value.is_absolute():
+            return path_value
+        return (project_root / path_value).resolve()
+
     split_seed = data_config.get("split_seed", seed)
     if split_seed != seed:
         logger.info(f"Split seed: {split_seed}")
@@ -763,8 +817,50 @@ def train(
             kfold_group_column,
         )
 
-    labels_csv = Path(data_config.get("labels_csv", "data/HAM10000/labels.csv"))
-    images_dir = Path(data_config.get("images_dir", "data/HAM10000/images"))
+    labels_csv = _resolve_project_path(
+        Path(data_config.get("labels_csv", "data/HAM10000/labels.csv"))
+    )
+    images_dir = _resolve_project_path(
+        Path(data_config.get("images_dir", "data/HAM10000/images"))
+    )
+
+    segmentation_config = data_config.get("segmentation", {})
+    segmentation_required = bool(segmentation_config.get("required", False))
+    use_segmentation_roi_crop = bool(
+        segmentation_config.get("enabled", False) or segmentation_required
+    )
+    segmentation_mask_threshold = int(segmentation_config.get("mask_threshold", 10))
+    segmentation_crop_margin = float(segmentation_config.get("crop_margin", 0.1))
+
+    mask_filename_suffixes = segmentation_config.get("filename_suffixes")
+    if mask_filename_suffixes is not None and not isinstance(
+        mask_filename_suffixes, list
+    ):
+        raise ValueError("data.segmentation.filename_suffixes must be a list")
+
+    masks_dir: Optional[Path] = None
+    if use_segmentation_roi_crop:
+        configured_masks_dir = segmentation_config.get(
+            "masks_dir", "data/HAM10000_Segmentations"
+        )
+        if not configured_masks_dir:
+            raise ValueError(
+                "data.segmentation.enabled=true requires data.segmentation.masks_dir"
+            )
+        masks_dir = _resolve_project_path(Path(str(configured_masks_dir)))
+
+        if not masks_dir.exists():
+            raise FileNotFoundError(
+                f"Segmentation masks directory not found: {masks_dir}"
+            )
+
+        logger.info(
+            "Segmentation ROI crop enabled | masks_dir=%s | threshold=%d | margin=%.3f | required=%s",
+            masks_dir,
+            segmentation_mask_threshold,
+            segmentation_crop_margin,
+            segmentation_required,
+        )
 
     # Load and split data
     logger.info("Loading and splitting data...")
@@ -799,7 +895,9 @@ def train(
 
         metadata_map = data_config.get("metadata_column_map", {})
 
-        def _infer_column(candidates: list[str], keywords: tuple[str, ...]) -> Optional[str]:
+        def _infer_column(
+            candidates: list[str], keywords: tuple[str, ...]
+        ) -> Optional[str]:
             for candidate in candidates:
                 name = str(candidate).lower()
                 if any(keyword in name for keyword in keywords):
@@ -829,6 +927,10 @@ def train(
                 "Provide data.metadata_column_map with keys age/sex/localization."
                 % ", ".join(missing_role_columns)
             )
+
+        assert age_column is not None
+        assert sex_column is not None
+        assert localization_column is not None
 
         metadata_columns_for_dataset = list(
             dict.fromkeys([age_column, sex_column, localization_column])
@@ -948,6 +1050,7 @@ def train(
         val_df=val_df,
         test_df=test_df,
         images_dir=images_dir,
+        masks_dir=masks_dir,
         batch_size=batch_size,
         num_workers=num_workers,
         image_size=config.get("model", {}).get("image_size", 224),
@@ -960,6 +1063,11 @@ def train(
         use_metadata=use_metadata,
         metadata_columns=metadata_columns_for_dataset,
         metadata_encoder=metadata_encoder,
+        use_segmentation_roi_crop=use_segmentation_roi_crop,
+        segmentation_mask_threshold=segmentation_mask_threshold,
+        segmentation_crop_margin=segmentation_crop_margin,
+        segmentation_required=segmentation_required,
+        mask_filename_suffixes=mask_filename_suffixes,
     )
 
     # Loss configuration and class weights
@@ -1097,7 +1205,9 @@ def train(
         stage_epochs: int,
         only_classifier: bool,
     ):
-        params = _resolve_stage1_params(model) if only_classifier else model.parameters()
+        params = (
+            _resolve_stage1_params(model) if only_classifier else model.parameters()
+        )
         optimizer = AdamW(
             params,
             lr=stage_lr,
@@ -1124,7 +1234,9 @@ def train(
 
     if resume_from is not None and resume_from.exists():
         logger.info(f"Resuming from checkpoint: {resume_from}")
-        checkpoint = torch.load(str(resume_from), map_location="cpu", weights_only=False)
+        checkpoint = torch.load(
+            str(resume_from), map_location="cpu", weights_only=False
+        )
         model.load_state_dict(checkpoint["model_state_dict"])
         start_epoch = checkpoint.get("epoch", -1) + 1
         prev_metrics = checkpoint.get("metrics", {})
@@ -1137,7 +1249,9 @@ def train(
         best_checkpoint_path = output_dir / "checkpoint_best.pt"
         if best_checkpoint_path.exists():
             logger.info("Found existing best checkpoint - loading its metrics")
-            best_checkpoint = torch.load(str(best_checkpoint_path), map_location="cpu", weights_only=False)
+            best_checkpoint = torch.load(
+                str(best_checkpoint_path), map_location="cpu", weights_only=False
+            )
             best_metrics = best_checkpoint.get("metrics", {})
             best_val_loss = best_metrics.get("val_loss", float("inf"))
             has_saved_best = True
@@ -1272,8 +1386,9 @@ def train(
 
     # Stage 1: head warmup (optional)
     if stage1_epochs > 0 and current_epoch < stage1_epochs:
-        if hasattr(model, "_freeze_backbone"):
-            model._freeze_backbone()
+        freeze_backbone_fn = getattr(model, "_freeze_backbone", None)
+        if callable(freeze_backbone_fn):
+            freeze_backbone_fn()
         else:
             backbone_module = _resolve_backbone_module(model)
             if backbone_module is None:
@@ -1300,8 +1415,9 @@ def train(
 
     # Stage 2: full fine-tune
     if not stopped and stage2_epochs > 0 and current_epoch < total_epochs:
-        if hasattr(model, "unfreeze_backbone"):
-            model.unfreeze_backbone()
+        unfreeze_backbone_fn = getattr(model, "unfreeze_backbone", None)
+        if callable(unfreeze_backbone_fn):
+            unfreeze_backbone_fn()
         else:
             backbone_module = _resolve_backbone_module(model)
             if backbone_module is None:
@@ -1385,6 +1501,8 @@ def main() -> None:
     args.resume = _resolve_project_path(args.resume)
 
     # Load configuration
+    if args.config is None:
+        raise ValueError("Configuration path could not be resolved")
     config = load_config(args.config)
 
     # Set up output directory

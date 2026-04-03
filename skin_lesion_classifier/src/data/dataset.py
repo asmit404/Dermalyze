@@ -65,12 +65,18 @@ class HAM10000Dataset(Dataset):
         self,
         df: pd.DataFrame,
         images_dir: Path | str,
+        masks_dir: Path | str | None = None,
         transform: Optional[Callable] = None,
         target_transform: Optional[Callable] = None,
         use_metadata: bool = False,
         metadata_columns: Optional[list[str]] = None,
         metadata_encoder: Optional[MetadataEncoder] = None,
         strict_labels: bool = True,
+        use_segmentation_roi_crop: bool = False,
+        segmentation_mask_threshold: int = 10,
+        segmentation_crop_margin: float = 0.1,
+        segmentation_required: bool = False,
+        mask_filename_suffixes: Optional[list[str]] = None,
     ):
         """
         Initialize the dataset.
@@ -85,11 +91,26 @@ class HAM10000Dataset(Dataset):
         """
         self.df = df.reset_index(drop=True)
         self.images_dir = Path(images_dir)
+        self.masks_dir = Path(masks_dir) if masks_dir is not None else None
         self.transform = transform
         self.target_transform = target_transform
         self.use_metadata = use_metadata
         self.metadata_encoder = metadata_encoder
         self.strict_labels = strict_labels
+        self.use_segmentation_roi_crop = bool(use_segmentation_roi_crop)
+        self.segmentation_mask_threshold = int(segmentation_mask_threshold)
+        self.segmentation_crop_margin = max(float(segmentation_crop_margin), 0.0)
+        self.segmentation_required = bool(segmentation_required)
+        self.mask_filename_suffixes = (
+            list(mask_filename_suffixes)
+            if mask_filename_suffixes is not None
+            else ["", "_segmentation", "_mask"]
+        )
+
+        if self.use_segmentation_roi_crop and self.masks_dir is None:
+            raise ValueError(
+                "use_segmentation_roi_crop=True requires masks_dir to be provided"
+            )
 
         # Default metadata columns from HAM10000 dataset
         if metadata_columns is None:
@@ -103,6 +124,10 @@ class HAM10000Dataset(Dataset):
 
         # Validate that all images exist
         self._validate_images()
+
+        # Optionally require masks for all samples
+        if self.use_segmentation_roi_crop and self.segmentation_required:
+            self._validate_masks()
 
     def _validate_metadata_columns(self) -> None:
         """Validate that requested metadata columns exist in the DataFrame."""
@@ -139,6 +164,71 @@ class HAM10000Dataset(Dataset):
         # Default to jpg if not found (will fail in validation)
         return self.images_dir / f"{image_id}.jpg"
 
+    def _get_mask_path(self, image_id: str) -> Optional[Path]:
+        """Get the full path to a mask file, if available."""
+        if self.masks_dir is None:
+            return None
+
+        for suffix in self.mask_filename_suffixes:
+            for ext in [".png", ".jpg", ".jpeg", ".PNG", ".JPG", ".JPEG"]:
+                candidate = self.masks_dir / f"{image_id}{suffix}{ext}"
+                if candidate.exists():
+                    return candidate
+        return None
+
+    def _validate_masks(self) -> None:
+        """Validate that all referenced masks exist on disk when required."""
+        missing = []
+        for img_id in self.df["image_id"].values:
+            if self._get_mask_path(img_id) is None:
+                missing.append(img_id)
+
+        if missing and len(missing) <= 10:
+            raise FileNotFoundError(f"Missing segmentation masks: {missing}")
+        elif missing:
+            raise FileNotFoundError(
+                f"Missing {len(missing)} segmentation masks. First 10: {missing[:10]}"
+            )
+
+    def _crop_with_segmentation_mask(self, image: Image.Image, mask_path: Path) -> Image.Image:
+        """Crop image to lesion bounding box derived from segmentation mask."""
+        mask = Image.open(mask_path).convert("L")
+        mask_np = np.array(mask, dtype=np.uint8)
+        foreground = mask_np > self.segmentation_mask_threshold
+        if not np.any(foreground):
+            return image
+
+        ys, xs = np.where(foreground)
+        y_min_mask, y_max_mask = int(ys.min()), int(ys.max())
+        x_min_mask, x_max_mask = int(xs.min()), int(xs.max())
+
+        image_w, image_h = image.size
+        mask_h, mask_w = mask_np.shape
+
+        if mask_w <= 0 or mask_h <= 0:
+            return image
+
+        scale_x = image_w / mask_w
+        scale_y = image_h / mask_h
+
+        x_min = int(np.floor(x_min_mask * scale_x))
+        y_min = int(np.floor(y_min_mask * scale_y))
+        x_max = int(np.ceil((x_max_mask + 1) * scale_x)) - 1
+        y_max = int(np.ceil((y_max_mask + 1) * scale_y)) - 1
+
+        box_w = max(x_max - x_min + 1, 1)
+        box_h = max(y_max - y_min + 1, 1)
+        margin_px = int(round(max(box_w, box_h) * self.segmentation_crop_margin))
+
+        left = max(x_min - margin_px, 0)
+        top = max(y_min - margin_px, 0)
+        right = min(x_max + margin_px + 1, image_w)
+        bottom = min(y_max + margin_px + 1, image_h)
+
+        if left >= right or top >= bottom:
+            return image
+        return image.crop((left, top, right, bottom))
+
     def __len__(self) -> int:
         return len(self.df)
 
@@ -160,6 +250,17 @@ class HAM10000Dataset(Dataset):
         # Load image
         img_path = self._get_image_path(image_id)
         image = Image.open(img_path).convert("RGB")
+
+        # Optionally crop around lesion ROI derived from segmentation mask.
+        if self.use_segmentation_roi_crop:
+            mask_path = self._get_mask_path(image_id)
+            if mask_path is None:
+                if self.segmentation_required:
+                    raise FileNotFoundError(
+                        f"Missing segmentation mask for image_id={image_id!r}"
+                    )
+            else:
+                image = self._crop_with_segmentation_mask(image, mask_path)
 
         # Convert label to index
         label_idx = LABEL_TO_IDX.get(label)
@@ -537,6 +638,12 @@ def create_dataloaders(
     use_metadata: bool = False,
     metadata_columns: Optional[list[str]] = None,
     metadata_encoder: Optional[MetadataEncoder] = None,
+    masks_dir: Path | str | None = None,
+    use_segmentation_roi_crop: bool = False,
+    segmentation_mask_threshold: int = 10,
+    segmentation_crop_margin: float = 0.1,
+    segmentation_required: bool = False,
+    mask_filename_suffixes: Optional[list[str]] = None,
 ) -> Tuple[DataLoader, DataLoader, DataLoader]:
     """
     Create PyTorch DataLoaders for training, validation, and testing.
@@ -558,6 +665,12 @@ def create_dataloaders(
         use_metadata: Whether to return encoded metadata with each sample
         metadata_columns: Metadata columns to read from the CSV DataFrame
         metadata_encoder: Encoder used to convert metadata dicts to tensors
+        masks_dir: Path to segmentation masks directory (optional)
+        use_segmentation_roi_crop: Whether to crop each image to lesion ROI using mask
+        segmentation_mask_threshold: Pixel threshold to binarize masks
+        segmentation_crop_margin: Margin around lesion box as fraction of lesion size
+        segmentation_required: Whether every sample must have a mask
+        mask_filename_suffixes: Candidate suffixes to resolve mask filenames
 
     Returns:
         Tuple of (train_loader, val_loader, test_loader)
@@ -566,28 +679,46 @@ def create_dataloaders(
     train_dataset = HAM10000Dataset(
         df=train_df,
         images_dir=images_dir,
+        masks_dir=masks_dir,
         transform=get_transforms("train", image_size, augmentation_strength),
         use_metadata=use_metadata,
         metadata_columns=metadata_columns,
         metadata_encoder=metadata_encoder,
+        use_segmentation_roi_crop=use_segmentation_roi_crop,
+        segmentation_mask_threshold=segmentation_mask_threshold,
+        segmentation_crop_margin=segmentation_crop_margin,
+        segmentation_required=segmentation_required,
+        mask_filename_suffixes=mask_filename_suffixes,
     )
 
     val_dataset = HAM10000Dataset(
         df=val_df,
         images_dir=images_dir,
+        masks_dir=masks_dir,
         transform=get_transforms("val", image_size),
         use_metadata=use_metadata,
         metadata_columns=metadata_columns,
         metadata_encoder=metadata_encoder,
+        use_segmentation_roi_crop=use_segmentation_roi_crop,
+        segmentation_mask_threshold=segmentation_mask_threshold,
+        segmentation_crop_margin=segmentation_crop_margin,
+        segmentation_required=segmentation_required,
+        mask_filename_suffixes=mask_filename_suffixes,
     )
 
     test_dataset = HAM10000Dataset(
         df=test_df,
         images_dir=images_dir,
+        masks_dir=masks_dir,
         transform=get_transforms("test", image_size),
         use_metadata=use_metadata,
         metadata_columns=metadata_columns,
         metadata_encoder=metadata_encoder,
+        use_segmentation_roi_crop=use_segmentation_roi_crop,
+        segmentation_mask_threshold=segmentation_mask_threshold,
+        segmentation_crop_margin=segmentation_crop_margin,
+        segmentation_required=segmentation_required,
+        mask_filename_suffixes=mask_filename_suffixes,
     )
 
     # Create samplers

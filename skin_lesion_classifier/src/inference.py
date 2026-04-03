@@ -16,19 +16,18 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from PIL import Image
-from torchvision import transforms
-
 from src.data.dataset import (
     CLASS_LABELS,
     IDX_TO_LABEL,
-    LABEL_TO_IDX,
     IMAGENET_MEAN,
     IMAGENET_STD,
     preprocess_image,
 )
 from src.data.metadata_encoder import MetadataEncoder
-from src.models.convnext import SkinLesionConvNeXtClassifier, create_model as create_convnext_tiny_model
-from src.models.efficientnet import SkinLesionClassifier, create_model as create_efficientnet_b0_model
+from src.models.convnext import SkinLesionConvNeXtClassifier
+from src.models.convnext import create_model as create_convnext_tiny_model
+from src.models.efficientnet import SkinLesionClassifier
+from src.models.efficientnet import create_model as create_efficientnet_b0_model
 from src.models.efficientnet_b1 import SkinLesionClassifierB1, create_model_b1
 from src.models.efficientnet_b2 import SkinLesionClassifierB2, create_model_b2
 from src.models.efficientnet_b3 import SkinLesionClassifierB3, create_model_b3
@@ -36,16 +35,25 @@ from src.models.efficientnet_b4 import SkinLesionClassifierB4, create_model_b4
 from src.models.efficientnet_b5 import SkinLesionClassifierB5, create_model_b5
 from src.models.efficientnet_b6 import SkinLesionClassifierB6, create_model_b6
 from src.models.efficientnet_b7 import SkinLesionClassifierB7, create_model_b7
-from src.models.efficientnetv2_s import SkinLesionClassifierV2S, create_model_v2s
-from src.models.efficientnetv2_m import SkinLesionClassifierV2M, create_model_v2m
 from src.models.efficientnetv2_l import SkinLesionClassifierV2L, create_model_v2l
+from src.models.efficientnetv2_m import SkinLesionClassifierV2M, create_model_v2m
+from src.models.efficientnetv2_s import SkinLesionClassifierV2S, create_model_v2s
 from src.models.multi_input import create_multi_input_model
-from src.models.resnest_101 import SkinLesionResNeSt101Classifier, create_model_resnest101
-from src.models.seresnext_101 import SkinLesionSEResNeXt101Classifier, create_model_seresnext101
+from src.models.resnest_101 import (
+    SkinLesionResNeSt101Classifier,
+    create_model_resnest101,
+)
+from src.models.seresnext_101 import (
+    SkinLesionSEResNeXt101Classifier,
+    create_model_seresnext101,
+)
 from src.tta_constants import TTA_AUG_COUNTS
+from torchvision import transforms
 
 try:
-    import cv2
+    import cv2 as _cv2
+
+    cv2: Any = _cv2
 except ImportError:
     cv2 = None
 
@@ -265,12 +273,16 @@ class SkinLesionPredictor:
         self.class_names = list(sorted(CLASS_LABELS.keys()))
         self.class_descriptions = CLASS_LABELS
 
-    def _load_model(self) -> Tuple[nn.Module, Dict[str, Any], Optional[MetadataEncoder]]:
+    def _load_model(
+        self,
+    ) -> Tuple[nn.Module, Dict[str, Any], Optional[MetadataEncoder]]:
         """Load the model from checkpoint."""
         if not self.checkpoint_path.exists():
             raise FileNotFoundError(f"Checkpoint not found: {self.checkpoint_path}")
 
-        checkpoint = torch.load(self.checkpoint_path, map_location=self.device, weights_only=False)
+        checkpoint = torch.load(
+            self.checkpoint_path, map_location=self.device, weights_only=False
+        )
         config = checkpoint.get("config", {})
         metadata_encoder_state = checkpoint.get("metadata_encoder_state")
         metadata_encoder = (
@@ -295,7 +307,11 @@ class SkinLesionPredictor:
             ("efficientnetv2_l", SkinLesionClassifierV2L, create_model_v2l),
             ("convnext_tiny", SkinLesionConvNeXtClassifier, create_convnext_tiny_model),
             ("resnest_101", SkinLesionResNeSt101Classifier, create_model_resnest101),
-            ("seresnext_101", SkinLesionSEResNeXt101Classifier, create_model_seresnext101),
+            (
+                "seresnext_101",
+                SkinLesionSEResNeXt101Classifier,
+                create_model_seresnext101,
+            ),
         ]
 
         preferred_backbone_raw = str(model_config.get("backbone", "")).strip().lower()
@@ -364,7 +380,9 @@ class SkinLesionPredictor:
                     },
                     metadata_dim=metadata_encoder.get_metadata_dim(),
                     num_classes=model_config.get("num_classes", 7),
-                    metadata_hidden_dim=int(model_config.get("metadata_hidden_dim", 64)),
+                    metadata_hidden_dim=int(
+                        model_config.get("metadata_hidden_dim", 64)
+                    ),
                     fusion_hidden_dim=int(model_config.get("fusion_hidden_dim", 256)),
                     dropout_rate=float(model_config.get("dropout_rate", 0.3)),
                 )
@@ -719,7 +737,7 @@ class SkinLesionPredictor:
 
         return result
 
-    def get_class_info(self) -> Dict[str, str]:
+    def get_class_info(self) -> Dict[str, Any]:
         """Get information about all classes."""
         return {
             "classes": self.class_descriptions.copy(),
@@ -736,13 +754,19 @@ class SkinLesionPredictor:
                 self.metadata_encoder.sex_column,
                 self.metadata_encoder.localization_column,
             ]
+        get_total_params_fn = getattr(self.model, "get_total_params", None)
+        total_parameters = (
+            int(get_total_params_fn())
+            if callable(get_total_params_fn)
+            else int(sum(param.numel() for param in self.model.parameters()))
+        )
         return {
             "model_name": model_config.get("backbone", "auto"),
             "num_classes": model_config.get("num_classes", 7),
             "image_size": self.image_size,
             "device": str(self.device),
             "checkpoint": str(self.checkpoint_path),
-            "total_parameters": self.model.get_total_params(),
+            "total_parameters": total_parameters,
             "metadata_enabled": self.metadata_encoder is not None,
             "metadata_columns": metadata_columns,
         }
@@ -922,7 +946,6 @@ class EnsemblePredictor:
         ]
 
         # Calculate prediction variance across models (uncertainty measure)
-        prediction_variance = np.var(all_model_probs, axis=0)
         prediction_std = np.std(all_model_probs, axis=0)
 
         result = {
@@ -1049,7 +1072,7 @@ if __name__ == "__main__":
 
     print(f"Description: {result['predicted_class_description']}")
     print(f"Confidence: {result['confidence']:.4f}")
-    print(f"\nTop predictions:")
+    print("\nTop predictions:")
     for pred in result["top_k_predictions"]:
         print(f"  {pred['class']}: {pred['probability']:.4f}")
 

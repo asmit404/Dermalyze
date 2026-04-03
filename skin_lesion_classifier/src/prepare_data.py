@@ -272,10 +272,14 @@ def prepare_dataset(
     missing_on_disk = image_ids_in_labels - image_ids_on_disk
 
     if missing_in_labels:
-        logger.warning(f"{len(missing_in_labels)} images on disk not in ground_truth.csv")
+        logger.warning(
+            f"{len(missing_in_labels)} images on disk not in ground_truth.csv"
+        )
 
     if missing_on_disk:
-        logger.warning(f"{len(missing_on_disk)} images in ground_truth.csv not found on disk")
+        logger.warning(
+            f"{len(missing_on_disk)} images in ground_truth.csv not found on disk"
+        )
         # Remove missing images from DataFrame
         df = df[df["image_id"].isin(image_ids_on_disk)]
 
@@ -361,7 +365,9 @@ def print_statistics(df: pd.DataFrame, dataset_name: str = "Dataset") -> None:
             non_null_count = df[col].notna().sum()
             non_null_pct = (non_null_count / len(df)) * 100
             unique_vals = df[col].nunique()
-            print(f"  {col}: {non_null_count} non-null ({non_null_pct:.1f}%), {unique_vals} unique values")
+            print(
+                f"  {col}: {non_null_count} non-null ({non_null_pct:.1f}%), {unique_vals} unique values"
+            )
 
     print("=" * 60 + "\n")
 

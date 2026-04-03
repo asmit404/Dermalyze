@@ -15,7 +15,7 @@ import json
 import logging
 import sys
 from pathlib import Path
-from typing import Any, Dict, List, Literal, Optional, Tuple, Union
+from typing import Any, Dict, List, Literal, Optional, Tuple, Union, cast
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -24,36 +24,43 @@ import seaborn as sns
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import yaml
 from sklearn.calibration import calibration_curve
 from sklearn.metrics import (
     accuracy_score,
     classification_report,
     confusion_matrix,
-    f1_score,
     precision_recall_fscore_support,
     roc_auc_score,
     roc_curve,
 )
 from torch.utils.data import DataLoader
-from torchvision import transforms
 from tqdm import tqdm
-import yaml
 
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from src.data.dataset import (
-    HAM10000Dataset,
-    get_transforms,
     CLASS_LABELS,
-    LABEL_TO_IDX,
     IDX_TO_LABEL,
     IMAGENET_MEAN,
     IMAGENET_STD,
+    HAM10000Dataset,
+    get_transforms,
 )
 from src.data.metadata_encoder import MetadataEncoder
-from src.models.convnext import SkinLesionConvNeXtClassifier, create_model as create_convnext_tiny_model
-from src.models.efficientnet import SkinLesionClassifier, create_model as create_efficientnet_b0_model
+from src.models.convnext import (
+    SkinLesionConvNeXtClassifier,
+)
+from src.models.convnext import (
+    create_model as create_convnext_tiny_model,
+)
+from src.models.efficientnet import (
+    SkinLesionClassifier,
+)
+from src.models.efficientnet import (
+    create_model as create_efficientnet_b0_model,
+)
 from src.models.efficientnet_b1 import SkinLesionClassifierB1, create_model_b1
 from src.models.efficientnet_b2 import SkinLesionClassifierB2, create_model_b2
 from src.models.efficientnet_b3 import SkinLesionClassifierB3, create_model_b3
@@ -61,14 +68,19 @@ from src.models.efficientnet_b4 import SkinLesionClassifierB4, create_model_b4
 from src.models.efficientnet_b5 import SkinLesionClassifierB5, create_model_b5
 from src.models.efficientnet_b6 import SkinLesionClassifierB6, create_model_b6
 from src.models.efficientnet_b7 import SkinLesionClassifierB7, create_model_b7
-from src.models.efficientnetv2_s import SkinLesionClassifierV2S, create_model_v2s
-from src.models.efficientnetv2_m import SkinLesionClassifierV2M, create_model_v2m
 from src.models.efficientnetv2_l import SkinLesionClassifierV2L, create_model_v2l
+from src.models.efficientnetv2_m import SkinLesionClassifierV2M, create_model_v2m
+from src.models.efficientnetv2_s import SkinLesionClassifierV2S, create_model_v2s
 from src.models.multi_input import create_multi_input_model
-from src.models.resnest_101 import SkinLesionResNeSt101Classifier, create_model_resnest101
-from src.models.seresnext_101 import SkinLesionSEResNeXt101Classifier, create_model_seresnext101
+from src.models.resnest_101 import (
+    SkinLesionResNeSt101Classifier,
+    create_model_resnest101,
+)
+from src.models.seresnext_101 import (
+    SkinLesionSEResNeXt101Classifier,
+    create_model_seresnext101,
+)
 from src.tta_constants import TTA_AUG_COUNTS
-
 
 # Configure logging
 logging.basicConfig(
@@ -78,7 +90,9 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 try:
-    import cv2
+    import cv2 as _cv2
+
+    cv2: Any = _cv2
 except ImportError:
     cv2 = None
 
@@ -231,10 +245,17 @@ def _parse_eval_batch(
 ) -> Tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor]]:
     """Parse evaluation batch with optional metadata tensor."""
     if len(batch) == 3:
-        images, targets, metadata = batch
+        batch_with_metadata = cast(
+            Tuple[torch.Tensor, torch.Tensor, torch.Tensor],
+            batch,
+        )
+        images, targets, metadata = batch_with_metadata
         return images, targets, metadata
-    images, targets = batch
-    return images, targets, None
+    if len(batch) == 2:
+        batch_without_metadata = cast(Tuple[torch.Tensor, torch.Tensor], batch)
+        images, targets = batch_without_metadata
+        return images, targets, None
+    raise ValueError(f"Unexpected batch format with length={len(batch)}")
 
 
 def _forward_with_optional_metadata(
@@ -393,7 +414,7 @@ def load_model(
             load_error_messages.append(f"{architecture_name}: {exc}")
 
     if model is None:
-        attempted = ", ".join(name for name, _ in model_constructors)
+        attempted = ", ".join(name for name, _, _ in model_constructors)
         raise RuntimeError(
             "Could not load checkpoint with supported architectures "
             f"({attempted}). "
@@ -489,7 +510,6 @@ def get_predictions_with_tta(
 
     for batch in tqdm(dataloader, desc=f"Evaluating with TTA ({tta_mode})"):
         images, targets, metadata = _parse_eval_batch(batch)
-        batch_size = images.size(0)
 
         # Collect TTA predictions for each image in batch
         batch_tta_probs = []
@@ -549,7 +569,9 @@ def get_predictions_with_tta(
                 clip_limit=clahe_clip_limit,
                 tile_grid_size=clahe_grid_size,
             ).to(device)
-            logits = _forward_with_optional_metadata(model, clahe_images, metadata_device)
+            logits = _forward_with_optional_metadata(
+                model, clahe_images, metadata_device
+            )
             probs = F.softmax(logits, dim=1)
             batch_tta_probs.append(probs.cpu().numpy())
 
@@ -615,11 +637,12 @@ def get_ensemble_predictions(
     Returns:
         Tuple of (true_labels, predicted_labels, predicted_probabilities)
     """
+    np_weights: np.ndarray
     if weights is None:
-        weights = np.ones(len(models)) / len(models)
+        np_weights = np.ones(len(models), dtype=np.float64) / len(models)
     else:
-        weights = np.array(weights)
-        weights = weights / weights.sum()
+        np_weights = np.asarray(weights, dtype=np.float64)
+        np_weights = np_weights / np_weights.sum()
 
     all_targets = []
     all_preds = []
@@ -693,7 +716,9 @@ def get_ensemble_predictions(
                             aug_images, position="bottom_right", scale=1.1
                         )
 
-                    logits = _forward_with_optional_metadata(model, aug_images, metadata_device)
+                    logits = _forward_with_optional_metadata(
+                        model, aug_images, metadata_device
+                    )
                     probs = F.softmax(logits, dim=1)
                     tta_probs.append(probs.cpu().numpy())
 
@@ -704,7 +729,9 @@ def get_ensemble_predictions(
                 )  # (batch_size, n_augs, n_classes)
 
                 if use_clahe_tta and clahe_images is not None:
-                    logits = _forward_with_optional_metadata(model, clahe_images, metadata_device)
+                    logits = _forward_with_optional_metadata(
+                        model, clahe_images, metadata_device
+                    )
                     probs = F.softmax(logits, dim=1).cpu().numpy()
                     probs = probs[:, np.newaxis, :]  # (batch_size, 1, n_classes)
                     tta_probs = np.concatenate([tta_probs, probs], axis=1)
@@ -722,7 +749,9 @@ def get_ensemble_predictions(
                 # Standard prediction
                 images_device = images.to(device)
                 metadata_device = metadata.to(device) if metadata is not None else None
-                logits = _forward_with_optional_metadata(model, images_device, metadata_device)
+                logits = _forward_with_optional_metadata(
+                    model, images_device, metadata_device
+                )
                 probs = F.softmax(logits, dim=1).cpu().numpy()
                 model_probs_list.append(probs)
 
@@ -737,7 +766,7 @@ def get_ensemble_predictions(
         if aggregation == "mean":
             final_probs = np.mean(model_probs_list, axis=1)
         elif aggregation == "weighted_mean":
-            final_probs = np.average(model_probs_list, axis=1, weights=weights)
+            final_probs = np.average(model_probs_list, axis=1, weights=np_weights)
         else:  # geometric_mean
             final_probs = np.exp(np.mean(np.log(model_probs_list + 1e-10), axis=1))
             final_probs = final_probs / final_probs.sum(axis=1, keepdims=True)
@@ -800,10 +829,19 @@ def compute_metrics(
     )
 
     # ROC-AUC (one-vs-rest)
+    per_class_auc: List[Optional[float]]
     try:
         # For multi-class, compute OvR AUC
         roc_auc = roc_auc_score(y_true, y_prob, multi_class="ovr", average="macro")
-        per_class_auc = roc_auc_score(y_true, y_prob, multi_class="ovr", average=None)
+        raw_per_class_auc = roc_auc_score(
+            y_true,
+            y_prob,
+            multi_class="ovr",
+            average=None,
+        )
+        per_class_auc = [
+            float(score) for score in np.asarray(raw_per_class_auc).tolist()
+        ]
     except ValueError:
         roc_auc = None
         per_class_auc = [None] * len(class_names)
@@ -824,14 +862,13 @@ def compute_metrics(
     # Per-class metrics dictionary
     per_class_metrics = {}
     for i, class_name in enumerate(class_names):
+        auc_value = per_class_auc[i]
         per_class_metrics[class_name] = {
             "precision": float(precision[i]),
             "recall": float(recall[i]),
             "f1_score": float(f1[i]),
             "support": int(support[i]),
-            "roc_auc": (
-                float(per_class_auc[i]) if per_class_auc[i] is not None else None
-            ),
+            "roc_auc": None if auc_value is None else float(auc_value),
         }
 
     # One-vs-rest confusion counts per class
@@ -995,7 +1032,7 @@ def plot_roc_curves(
         y_true_bin[i, label] = 1
 
     # Plot ROC curve for each class
-    colors = plt.cm.rainbow(np.linspace(0, 1, n_classes))
+    colors = plt.get_cmap("rainbow")(np.linspace(0, 1, n_classes))
 
     for i, (class_name, color) in enumerate(zip(class_names, colors)):
         fpr, tpr, _ = roc_curve(y_true_bin[:, i], y_prob[:, i])
@@ -1181,6 +1218,12 @@ def evaluate(
     ensemble_aggregation: Literal[
         "mean", "weighted_mean", "geometric_mean"
     ] = "weighted_mean",
+    masks_dir: Optional[Path] = None,
+    use_segmentation_roi_crop: Optional[bool] = None,
+    segmentation_mask_threshold: Optional[int] = None,
+    segmentation_crop_margin: Optional[float] = None,
+    segmentation_required: Optional[bool] = None,
+    segmentation_mask_suffixes: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
     """
     Evaluate a trained model on test data.
@@ -1206,6 +1249,12 @@ def evaluate(
             - 'mean': Uniform averaging
             - 'weighted_mean': Weight by val accuracy (auto-computed if no weights)
             - 'geometric_mean': Geometric average
+        masks_dir: Optional directory containing segmentation masks
+        use_segmentation_roi_crop: Whether to crop images around lesion ROI from masks
+        segmentation_mask_threshold: Pixel threshold used to binarize masks
+        segmentation_crop_margin: Margin around lesion ROI as a fraction
+        segmentation_required: Whether every image must have a mask
+        segmentation_mask_suffixes: Optional list of mask filename suffixes
 
     Returns:
         Dictionary of evaluation results
@@ -1235,7 +1284,7 @@ def evaluate(
             models.append(model)
             metrics_list.append(metrics)
             metadata_states.append(metadata_state)
-            logger.info(f"  Model {i+1}: {cp}")
+            logger.info(f"  Model {i + 1}: {cp}")
 
         has_metadata_models = [state is not None for state in metadata_states]
         if any(has_metadata_models) and not all(has_metadata_models):
@@ -1258,12 +1307,12 @@ def evaluate(
             logger.info("Computing ensemble weights from validation metrics...")
             ensemble_weights = compute_ensemble_weights_from_metrics(
                 metrics_list, metric_name="val_acc"
-            )
+            ).tolist()
             logger.info(f"Auto-computed ensemble weights: {ensemble_weights}")
             # Log which model has highest weight
-            best_idx = np.argmax(ensemble_weights)
+            best_idx = int(np.argmax(np.asarray(ensemble_weights, dtype=np.float64)))
             logger.info(
-                f"  Highest weight (model {best_idx+1}): {ensemble_weights[best_idx]:.4f}"
+                f"  Highest weight (model {best_idx + 1}): {ensemble_weights[best_idx]:.4f}"
             )
 
         eval_mode = "ensemble"
@@ -1271,7 +1320,9 @@ def evaluate(
             eval_mode += f" + TTA-{tta_mode}"
     else:
         logger.info(f"Loading model from: {checkpoint_path}")
-        model, config, metrics, metadata_encoder_state = load_model(checkpoint_path, device)
+        model, config, metrics, metadata_encoder_state = load_model(
+            checkpoint_path, device
+        )
         eval_mode = "standard"
         if use_tta:
             eval_mode = f"TTA-{tta_mode}"
@@ -1288,10 +1339,71 @@ def evaluate(
     logger.info(f"Loading test data from: {test_csv}")
     test_df = pd.read_csv(test_csv)
 
+    segmentation_config = config.get("data", {}).get("segmentation", {})
+    resolved_segmentation_required = (
+        bool(segmentation_required)
+        if segmentation_required is not None
+        else bool(segmentation_config.get("required", False))
+    )
+    resolved_use_segmentation = (
+        bool(use_segmentation_roi_crop)
+        if use_segmentation_roi_crop is not None
+        else bool(segmentation_config.get("enabled", False))
+    )
+    resolved_use_segmentation = (
+        resolved_use_segmentation or resolved_segmentation_required
+    )
+
+    resolved_segmentation_threshold = (
+        int(segmentation_mask_threshold)
+        if segmentation_mask_threshold is not None
+        else int(segmentation_config.get("mask_threshold", 10))
+    )
+    resolved_segmentation_margin = (
+        float(segmentation_crop_margin)
+        if segmentation_crop_margin is not None
+        else float(segmentation_config.get("crop_margin", 0.1))
+    )
+    resolved_segmentation_suffixes = (
+        list(segmentation_mask_suffixes)
+        if segmentation_mask_suffixes is not None
+        else segmentation_config.get("filename_suffixes")
+    )
+
+    project_root = Path(__file__).resolve().parent.parent
+    resolved_masks_dir = masks_dir
+    if resolved_use_segmentation and resolved_masks_dir is None:
+        configured_masks_dir = segmentation_config.get(
+            "masks_dir", "data/HAM10000_Segmentations"
+        )
+        resolved_masks_dir = Path(str(configured_masks_dir))
+
+    if resolved_masks_dir is not None and not resolved_masks_dir.is_absolute():
+        resolved_masks_dir = (project_root / resolved_masks_dir).resolve()
+
+    if resolved_use_segmentation:
+        if resolved_masks_dir is None:
+            raise ValueError(
+                "Segmentation ROI crop enabled but no masks_dir was provided. "
+                "Set --masks-dir or data.segmentation.masks_dir."
+            )
+        if not resolved_masks_dir.exists():
+            raise FileNotFoundError(
+                f"Segmentation masks directory not found: {resolved_masks_dir}"
+            )
+        logger.info(
+            "Segmentation ROI crop enabled | masks_dir=%s | threshold=%d | margin=%.3f | required=%s",
+            resolved_masks_dir,
+            resolved_segmentation_threshold,
+            resolved_segmentation_margin,
+            resolved_segmentation_required,
+        )
+
     metadata_encoder: Optional[MetadataEncoder] = None
     metadata_columns: Optional[List[str]] = None
     use_metadata = metadata_encoder_state is not None
     if use_metadata:
+        assert metadata_encoder_state is not None
         metadata_encoder = MetadataEncoder.from_state(metadata_encoder_state)
         metadata_columns = list(
             dict.fromkeys(
@@ -1302,7 +1414,9 @@ def evaluate(
                 ]
             )
         )
-        missing_columns = [col for col in metadata_columns if col not in test_df.columns]
+        missing_columns = [
+            col for col in metadata_columns if col not in test_df.columns
+        ]
         if missing_columns:
             logger.warning(
                 "Metadata columns missing in test CSV: %s. Filling with nulls so encoder defaults are used.",
@@ -1320,11 +1434,17 @@ def evaluate(
     test_dataset = HAM10000Dataset(
         df=test_df,
         images_dir=images_dir,
+        masks_dir=resolved_masks_dir,
         transform=get_transforms("test", image_size),
         use_metadata=use_metadata,
         metadata_columns=metadata_columns,
         metadata_encoder=metadata_encoder,
         strict_labels=False,
+        use_segmentation_roi_crop=resolved_use_segmentation,
+        segmentation_mask_threshold=resolved_segmentation_threshold,
+        segmentation_crop_margin=resolved_segmentation_margin,
+        segmentation_required=resolved_segmentation_required,
+        mask_filename_suffixes=resolved_segmentation_suffixes,
     )
 
     test_loader = DataLoader(
@@ -1372,12 +1492,14 @@ def evaluate(
     class_names = [IDX_TO_LABEL[i] for i in range(len(CLASS_LABELS))]
 
     # Save per-sample predictions for all rows (including unlabeled ones).
-    predictions_df = pd.DataFrame({
-        "image_id": test_df["image_id"].astype(str).values,
-        "pred_idx": y_pred.astype(int),
-        "pred_label": [IDX_TO_LABEL[int(idx)] for idx in y_pred],
-        "true_idx": y_true.astype(int),
-    })
+    predictions_df = pd.DataFrame(
+        {
+            "image_id": test_df["image_id"].astype(str).values,
+            "pred_idx": y_pred.astype(int),
+            "pred_label": [IDX_TO_LABEL[int(idx)] for idx in y_pred],
+            "true_idx": y_true.astype(int),
+        }
+    )
     if "label" in test_df.columns:
         predictions_df["true_label"] = test_df["label"].astype(str).values
     for class_idx, class_name in enumerate(class_names):
@@ -1398,7 +1520,7 @@ def evaluate(
         )
 
     if labeled_count == 0:
-        metrics = {
+        metrics: Dict[str, Any] = {
             "evaluation_mode": eval_mode,
             "num_samples": int(len(y_true)),
             "num_labeled_samples": 0,
@@ -1418,11 +1540,7 @@ def evaluate(
             metrics["ensemble_config"] = {
                 "num_models": len(models),
                 "aggregation": ensemble_aggregation,
-                "weights": (
-                    ensemble_weights.tolist()
-                    if isinstance(ensemble_weights, np.ndarray)
-                    else ensemble_weights
-                ),
+                "weights": ensemble_weights,
             }
 
         metrics_path = output_dir / "evaluation_metrics.json"
@@ -1447,7 +1565,9 @@ def evaluate(
 
     # Compute metrics
     logger.info("Computing metrics...")
-    metrics = compute_metrics(y_true_labeled, y_pred_labeled, y_prob_labeled, class_names)
+    metrics = compute_metrics(
+        y_true_labeled, y_pred_labeled, y_prob_labeled, class_names
+    )
     metrics["num_samples"] = int(len(y_true))
     metrics["num_labeled_samples"] = labeled_count
     metrics["num_unlabeled_samples"] = unlabeled_count
@@ -1475,7 +1595,9 @@ def evaluate(
     )
 
     # ROC curves
-    plot_roc_curves(y_true_labeled, y_prob_labeled, class_names, output_dir / "roc_curves.png")
+    plot_roc_curves(
+        y_true_labeled, y_prob_labeled, class_names, output_dir / "roc_curves.png"
+    )
 
     # Per-class metrics
     plot_per_class_metrics(metrics, class_names, output_dir / "per_class_metrics.png")
@@ -1494,11 +1616,7 @@ def evaluate(
         metrics["ensemble_config"] = {
             "num_models": len(models),
             "aggregation": ensemble_aggregation,
-            "weights": (
-                ensemble_weights.tolist()
-                if isinstance(ensemble_weights, np.ndarray)
-                else ensemble_weights
-            ),
+            "weights": ensemble_weights,
         }
 
     metrics_path = output_dir / "evaluation_metrics.json"
@@ -1568,6 +1686,12 @@ def main() -> None:
         help="Path to images directory",
     )
     parser.add_argument(
+        "--masks-dir",
+        type=Path,
+        default=None,
+        help="Optional path to segmentation masks directory",
+    )
+    parser.add_argument(
         "--output",
         type=Path,
         default=Path("evaluation_results"),
@@ -1622,6 +1746,37 @@ def main() -> None:
         help="CLAHE tile grid size used when --use-clahe-tta is enabled",
     )
     parser.add_argument(
+        "--use-segmentation-roi-crop",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Enable lesion ROI crop using segmentation masks",
+    )
+    parser.add_argument(
+        "--segmentation-mask-threshold",
+        type=int,
+        default=None,
+        help="Mask binarization threshold for segmentation ROI crop",
+    )
+    parser.add_argument(
+        "--segmentation-crop-margin",
+        type=float,
+        default=None,
+        help="Margin around lesion ROI as a fraction of lesion size",
+    )
+    parser.add_argument(
+        "--segmentation-required",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Require segmentation mask for every evaluated sample",
+    )
+    parser.add_argument(
+        "--segmentation-mask-suffixes",
+        type=str,
+        nargs="+",
+        default=None,
+        help="Mask filename suffixes to try, e.g. '' _segmentation _mask",
+    )
+    parser.add_argument(
         "--ensemble-weights",
         type=float,
         nargs="+",
@@ -1646,6 +1801,8 @@ def main() -> None:
     args.checkpoint = [_resolve_project_path(cp) for cp in args.checkpoint]
     args.test_csv = _resolve_project_path(args.test_csv)
     args.images_dir = _resolve_project_path(args.images_dir)
+    if args.masks_dir is not None:
+        args.masks_dir = _resolve_project_path(args.masks_dir)
     args.output = _resolve_project_path(args.output)
 
     config_defaults: Dict[str, Any] = {}
@@ -1654,6 +1811,7 @@ def main() -> None:
             config_defaults = yaml.safe_load(f) or {}
 
     tta_defaults = config_defaults.get("evaluation", {}).get("tta", {})
+    segmentation_defaults = config_defaults.get("data", {}).get("segmentation", {})
 
     use_tta = (
         bool(args.use_tta)
@@ -1669,6 +1827,23 @@ def main() -> None:
         str(args.tta_aggregation)
         if args.tta_aggregation is not None
         else str(tta_defaults.get("aggregation", "mean"))
+    )
+
+    valid_tta_modes = {"light", "medium", "full"}
+    if tta_mode not in valid_tta_modes:
+        raise ValueError(
+            f"Invalid tta_mode={tta_mode!r}. Expected one of {sorted(valid_tta_modes)}"
+        )
+    tta_mode_lit = cast(Literal["light", "medium", "full"], tta_mode)
+
+    valid_tta_aggs = {"mean", "geometric_mean", "max"}
+    if tta_aggregation not in valid_tta_aggs:
+        raise ValueError(
+            "Invalid tta_aggregation=%r. Expected one of %s"
+            % (tta_aggregation, sorted(valid_tta_aggs))
+        )
+    tta_aggregation_lit = cast(
+        Literal["mean", "geometric_mean", "max"], tta_aggregation
     )
 
     use_clahe_tta = (
@@ -1687,6 +1862,38 @@ def main() -> None:
         else int(tta_defaults.get("clahe_grid_size", 8))
     )
 
+    use_segmentation_roi_crop = (
+        bool(args.use_segmentation_roi_crop)
+        if args.use_segmentation_roi_crop is not None
+        else bool(segmentation_defaults.get("enabled", False))
+    )
+    segmentation_required = (
+        bool(args.segmentation_required)
+        if args.segmentation_required is not None
+        else bool(segmentation_defaults.get("required", False))
+    )
+    segmentation_mask_threshold = (
+        int(args.segmentation_mask_threshold)
+        if args.segmentation_mask_threshold is not None
+        else int(segmentation_defaults.get("mask_threshold", 10))
+    )
+    segmentation_crop_margin = (
+        float(args.segmentation_crop_margin)
+        if args.segmentation_crop_margin is not None
+        else float(segmentation_defaults.get("crop_margin", 0.1))
+    )
+    segmentation_mask_suffixes = (
+        list(args.segmentation_mask_suffixes)
+        if args.segmentation_mask_suffixes is not None
+        else segmentation_defaults.get("filename_suffixes")
+    )
+
+    masks_dir = args.masks_dir
+    if masks_dir is None and (use_segmentation_roi_crop or segmentation_required):
+        cfg_masks_dir = segmentation_defaults.get("masks_dir")
+        if cfg_masks_dir:
+            masks_dir = _resolve_project_path(Path(str(cfg_masks_dir)))
+
     # Determine if using ensemble
     use_ensemble = len(args.checkpoint) > 1
     checkpoint_path = args.checkpoint if use_ensemble else args.checkpoint[0]
@@ -1699,14 +1906,20 @@ def main() -> None:
         batch_size=args.batch_size,
         num_workers=args.num_workers,
         use_tta=use_tta,
-        tta_mode=tta_mode,
-        tta_aggregation=tta_aggregation,
+        tta_mode=tta_mode_lit,
+        tta_aggregation=tta_aggregation_lit,
         use_clahe_tta=use_clahe_tta,
         clahe_clip_limit=clahe_clip_limit,
         clahe_grid_size=clahe_grid_size,
         use_ensemble=use_ensemble,
         ensemble_weights=args.ensemble_weights,
         ensemble_aggregation=args.ensemble_aggregation,
+        masks_dir=masks_dir,
+        use_segmentation_roi_crop=use_segmentation_roi_crop,
+        segmentation_mask_threshold=segmentation_mask_threshold,
+        segmentation_crop_margin=segmentation_crop_margin,
+        segmentation_required=segmentation_required,
+        segmentation_mask_suffixes=segmentation_mask_suffixes,
     )
 
 
