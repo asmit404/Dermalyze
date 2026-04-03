@@ -1,120 +1,146 @@
 # Dermalyze Inference Service
 
-Standalone FastAPI service for skin lesion classification inference. This package is intentionally decoupled from the training pipeline (`../skin_lesion_classifier/`) to enable independent deployment with the frontend.
+Standalone FastAPI inference API for Dermalyze. This service is intentionally decoupled from the training pipeline for independent deployment.
 
-> ⚠️ **DISCLAIMER**: Educational/research purposes only. Not for medical diagnosis. Consult healthcare professionals for medical advice.
+> ⚠️ DISCLAIMER: Educational/research purposes only. Not for medical diagnosis.
 
-## Architecture
+## Overview
 
-- **Purpose**: Production inference API for frontend (`../frontend/`)
-- **Models**: EfficientNet-B0, ConvNeXt-Tiny (trained on HAM10000 dataset)
-- **Classes**: 7 skin lesion types (akiec, bcc, bkl, df, mel, nv, vasc)
-- **Features**: Test-Time Augmentation (TTA), CORS support, health checks
-- **Dependencies**: Minimal (PyTorch + FastAPI, no training libraries)
+- Framework: FastAPI
+- Checkpoint loading: local `.pt` checkpoint
+- Supported model architectures in this package: EfficientNet-B0 and ConvNeXt-Tiny
+- Output classes: 7 lesion classes (`akiec`, `bcc`, `bkl`, `df`, `mel`, `nv`, `vasc`)
 
 ## Quick Start
 
 ```bash
-# 1. Navigate to inference service
 cd inference_service
-
-# 2. Create virtual environment
-python -m venv venv
-source venv/bin/activate  # Windows: venv\Scripts\activate
-
-# 3. Install dependencies
+python -m venv .venv
+source .venv/bin/activate
 pip install -r requirements.txt
-
-# 4. Place your trained model checkpoint
-mkdir -p model
-# Copy checkpoint from training outputs:
-# cp ../skin_lesion_classifier/outputs/run_xxx/checkpoint_best.pt model/
-
-# 5. Run the API server
 uvicorn app:app --host 0.0.0.0 --port 8000
 ```
 
-**Alternative** (run from repository root):
+Alternative from repo root:
 
 ```bash
 uvicorn inference_service.app:app --host 0.0.0.0 --port 8000
 ```
 
-API will be available at: **http://localhost:8000**  
-API docs: **http://localhost:8000/docs**
+API docs: `http://localhost:8000/docs`
 
-## Environment Variables
+## Checkpoint Resolution
 
-- `MODEL_CHECKPOINT` (default: `inference_service/model/checkpoint_best.pt`)
-- `MODEL_IMAGE_SIZE` (default: `224`)
-- `USE_TTA` (`true`/`false`, default: `false`)
-- `TTA_MODE` (`light` | `medium` | `full`, default: `medium`)
-- `TTA_AGGREGATION` (`mean` | `geometric_mean` | `max`, default: `geometric_mean`)
-- `CORS_ORIGINS` (comma-separated frontend origins)
-- `GEMINI_API_KEY` (optional — enables Gemini-based validation that rejects non-dermatoscopic images before inference)
-- `SUPABASE_URL` (required — Supabase project URL from Dashboard → API → Project URL; used for JWKS-based ES256 token verification)
-- `SUPABASE_JWT_SECRET` (optional — JWT secret for legacy HS256 fallback; only needed if JWKS verification fails)
+Load order:
 
-## Frontend Contract
+1. `MODEL_CHECKPOINT` env var (if set)
+2. `inference_service/models/checkpoint_best.pt`
+3. legacy fallback: `inference_service/model/checkpoint_best.pt`
 
-- `POST /classify`
-- Content type: `multipart/form-data`
-- File field name: `file`
-- Accepted image types: JPEG, PNG, WebP
-- Max upload size: 10 MB
+If no valid checkpoint is found, `/classify` returns `503`.
+
+## API Endpoints
+
+- `GET /` - basic health response
+- `POST /classify` - authenticated image classification
+
+There is no separate `/health` route in current code.
+
+## Authentication
+
+`POST /classify` requires `Authorization: Bearer <jwt>`.
+
+Token verification behavior:
+
+- Preferred: JWKS verification via `SUPABASE_URL` (`/auth/v1/.well-known/jwks.json`)
+- Fallback: HS256 verification via `SUPABASE_JWT_SECRET`
+- If neither is configured, classify requests fail with `503`
+
+## Request/Response Contract
+
+Request:
+
+- method: `POST /classify`
+- content type: `multipart/form-data`
+- file field: `file`
+- accepted MIME types: `image/jpeg`, `image/png`, `image/webp`
+- max file size: 10 MB
 
 Response:
 
 ```json
 {
   "classes": [
-    {"id": "mel", "name": "Melanoma", "score": 67.4}
+    { "id": "mel", "name": "Melanoma", "score": 87.42 },
+    { "id": "bcc", "name": "Basal Cell Carcinoma", "score": 9.31 }
   ]
 }
 ```
-Endpoints
 
-- `GET /` - Health check
-- `GET /health` - Detailed health status
-- `POST /classify` - Classify skin lesion image
+`classes` are returned in descending score order.
 
-## Frontend Integration
+## Validation and Safety Controls
 
-Configure frontend (`../frontend/.env.local`):
+- Magic-byte validation enforces declared MIME type matches file bytes.
+- Optional Gemini validation rejects non-dermatoscopic images when `GEMINI_API_KEY` is set.
+- Rate limit on `/classify`: `20/minute` per client key.
+- Rate-limit key can use `X-Forwarded-For` when request comes from a trusted proxy.
 
-```env
-VITE_API_URL=http://localhost:8000
-```
+## Environment Variables
 
-See [`../frontend/README.md`](../frontend/README.md) for full frontend setup.
+Core inference:
 
-## Model Checkpoint
+- `MODEL_CHECKPOINT` (optional; explicit checkpoint path)
+- `MODEL_IMAGE_SIZE` (default: `224`)
+- `USE_TTA` (`true|false`, default: `false`)
+- `TTA_MODE` (`light|medium|full`, default: `medium`)
+- `TTA_AGGREGATION` (`mean|geometric_mean|max`, default: `geometric_mean`)
 
-Place your trained checkpoint at:
+Auth:
 
-```
-inference_service/model/checkpoint_best.pt
-```
+- `SUPABASE_URL` (recommended for JWKS verification)
+- `SUPABASE_JWT_SECRET` (legacy fallback)
 
-Or train one using the ML pipeline:
+Validation:
 
-```bash
-cd ../skin_lesion_classifier
-python src/train.py --config config.yaml
-# Copy best checkpoint to inference service
-cp outputs/run_xxx/checkpoint_best.pt ../inference_service/model/
-```
+- `GEMINI_API_KEY` (optional)
 
-See [`../skin_lesion_classifier/README.md`](../skin_lesion_classifier/README.md) for training details.
+CORS and proxy:
 
-## Deployment Files
+- `CORS_ORIGINS` (comma-separated additional origins)
+- `CORS_ORIGIN_REGEX` (default: `https://([a-zA-Z0-9-]+\.)?dermalyze\.tech`)
+- `TRUSTED_PROXY_IPS` (default: `127.0.0.1,::1`)
 
-When deploying, include:
-- `inference_service/app.py` - FastAPI application
-- `inference_service/predictor.py` - Inference logic
-- `inference_service/models/` - Model architectures (efficientnet.py, convnext.py)
-- `inference_service/metadata.py` - Class labels and preprocessing
-- `inference_service/tta_constants.py` - Test-Time Augmentation configs
-- `inference_service/model/checkpoint_best.pt` - Trained model weights
-- `inference_service/requirements.txt` - DependenciesE_API_URL=http://localhost:8000
-```
+Built-in CORS defaults always include:
+
+- `http://localhost:3000`
+- `http://127.0.0.1:3000`
+- `http://localhost:5173`
+- `http://127.0.0.1:5173`
+- `https://www.dermalyze.tech`
+- `https://dermalyze.tech`
+
+## Error Codes
+
+- `400` invalid inference inputs/state
+- `401` missing/invalid/expired auth token
+- `413` file too large
+- `415` unsupported media type or magic-byte mismatch
+- `422` non-dermatoscopic image (Gemini-enabled mode)
+- `429` rate limit exceeded
+- `500` inference runtime failure
+- `503` auth service/checkpoint/validation backend unavailable
+
+## Docker Notes
+
+`inference_service/Dockerfile`:
+
+- installs dependencies
+- downloads checkpoint to `/app/models/checkpoint_best.pt`
+- sets `MODEL_CHECKPOINT=/app/models/checkpoint_best.pt`
+- starts Uvicorn on port `7860`
+
+## Integration
+
+- Frontend setup: [`../frontend/README.md`](../frontend/README.md)
+- Model training: [`../skin_lesion_classifier/README.md`](../skin_lesion_classifier/README.md)

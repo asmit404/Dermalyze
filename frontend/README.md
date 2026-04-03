@@ -1,110 +1,142 @@
 # Dermalyze Frontend
 
-Web application for AI-assisted skin lesion classification intended as an educational tool.
+React + Vite + TypeScript frontend for authenticated dermoscopic image upload, AI classification, and longitudinal result tracking.
 
-> ⚠️ **DISCLAIMER**: Educational/research purposes only. Not for medical diagnosis. Consult healthcare professionals for medical advice.
+> ⚠️ DISCLAIMER: Educational/research purposes only. Not for medical diagnosis.
 
 ## Overview
 
-Dermalyze allows users to upload dermoscopic images and receive AI-powered classification results across 7 skin lesion categories:
+The frontend provides:
 
-| Abbreviation | Condition |
-|---|---|
-| **akiec** | Actinic keratoses and intraepithelial carcinoma |
-| **bcc** | Basal cell carcinoma |
-| **bkl** | Benign keratosis-like lesions |
-| **df** | Dermatofibroma |
-| **mel** | Melanoma |
-| **nv** | Melanocytic nevi |
-| **vasc** | Vascular lesions |
+- Supabase authentication flows (login, signup, password reset, email verification)
+- Image upload and classification orchestration against the inference API
+- Results visualization across 7 lesion classes
+- User-specific analysis history and trends dashboards
 
-## Features
+Class IDs used throughout the UI and backend:
 
-- **User Authentication** — Login, signup, and password recovery flows (Supabase Auth)
-- **Image Upload** — Upload dermoscopic skin images for analysis
-- **AI Classification** — Get probability scores across 7 lesion classes
-- **Analysis History** — Review past classification results
-- **Responsive UI** — Clean, mobile-friendly interface built with React + Tailwind CSS
+- `akiec` - Actinic keratoses / intraepithelial carcinoma
+- `bcc` - Basal cell carcinoma
+- `bkl` - Benign keratosis-like lesions
+- `df` - Dermatofibroma
+- `mel` - Melanoma
+- `nv` - Melanocytic nevi
+- `vasc` - Vascular lesions
 
-## Architecture
+## Tech Stack
 
-This frontend communicates with the **Dermalyze Inference Service** (`../inference_service/`) for skin lesion classification:
+- React 19
+- TypeScript
+- Vite 6
+- Tailwind CSS
+- Supabase JS SDK
 
-- Frontend: React + Vite + TypeScript
-- Backend API: FastAPI inference service (separate deployment)
-- Auth & Storage: Supabase
-- ML Models: EfficientNet-B0 / ConvNeXt-Tiny trained on HAM10000 dataset
+## Prerequisites
 
-See `../inference_service/README.md` for API documentation.
+1. Node.js 18+.
+2. Running inference API (see `../inference_service/README.md`).
+3. Supabase project for auth + data persistence.
 
-## Getting Started
-
-
-### Prerequisites
-
-Ensure the **inference service** is running (see `../inference_service/README.md`):
-
-```bash
-cd ../inference_service
-uvicorn app:app --host 0.0.0.0 --port 8000
-```
-
-### Installation
+## Setup
 
 ```bash
 cd frontend
 npm install
 ```
 
-### Configuration
+Create `frontend/.env.local` with the variables below.
 
-Create a `.env.local` file in the project root:
+## Environment Variables
 
-```bash
-cp .env.local.example .env.local
-code .env.local
-```
+Required:
 
-Set values in `.env.local` (API points to `../inference_service/` in local dev):
+- `VITE_SUPABASE_URL` - Supabase project URL.
+- `VITE_SUPABASE_ANON_KEY` - Supabase anonymous key.
+
+Optional:
+
+- `VITE_API_URL` - Absolute backend URL. If omitted, frontend uses `/api`.
+
+Dev-only override:
+
+- `BACKEND_URL` - Overrides Vite proxy target for `/api` (default: `http://localhost:8000`).
+
+Example `frontend/.env.local`:
 
 ```env
-# Local development (default)
+VITE_SUPABASE_URL=https://your-project.supabase.co
+VITE_SUPABASE_ANON_KEY=your-anon-key
 VITE_API_URL=http://localhost:8000
-
-# Production deployment
-VITE_API_URL=https://your-backend-domain.com
 ```
 
-**Local dev fallback:**
-- If `VITE_API_URL` is not set, frontend calls `/api`.
-- Vite proxies `/api/*` to `http://localhost:8000` by default.
-- Override local backend target with:
+## Development
+
+```bash
+npm run dev
+```
+
+Vite is configured to run on `http://localhost:3000`.
+
+If `VITE_API_URL` is not set:
+
+- frontend requests `POST /api/classify`
+- Vite proxy forwards `/api/*` to `http://localhost:8000` by default
+- override target with:
 
 ```bash
 BACKEND_URL=http://localhost:9000 npm run dev
 ```
 
-
-
-
-### Run
-
-```bash
-npm run dev
-```
-Frontend runs at `http://localhost:5173` by default.
-
 ## Scripts
 
-| Command | Description |
-|---|---|
-| `npm run dev` | Start development server |
-| `npm run build` | Build for production |
-| `npm run preview` | Preview production build |
-| `npm run lint` | Run ESLint |
+- `npm run dev` - start dev server
+- `npm run build` - build production bundle
+- `npm run preview` - preview production build
+- `npm run lint` - run ESLint
+- `npm run format` - run Prettier
 
-## Related Components
+## Runtime Behavior Notes
 
-- **Inference API**: [`../inference_service/`](../inference_service/README.md) - FastAPI server for model predictions
-- **Training Pipeline**: [`../skin_lesion_classifier/`](../skin_lesion_classifier/README.md) - ML model training and evaluation
+- API requests include Supabase Bearer tokens.
+- The classify call refreshes tokens if expiry is within 60 seconds.
+- Supabase auth state is stored in `window.sessionStorage` (session ends on browser/tab close).
+- Idle session guard: warning around 28 minutes inactivity, sign-out around 30 minutes inactivity on protected routes.
+
+## Backend Contract
+
+Classification request:
+
+- method: `POST`
+- path: `/classify` (or `/api/classify` when proxying)
+- body: `multipart/form-data` with `file` field
+- auth: `Authorization: Bearer <supabase_access_token>`
+
+Response shape:
+
+```json
+{
+  "classes": [
+    { "id": "mel", "name": "Melanoma", "score": 87.42 }
+  ]
+}
+```
+
+`classes` are sorted descending by `score` before rendering.
+
+## Supabase Setup
+
+Use `frontend/supabase_setup.sql` to provision:
+
+- `public.analyses` table
+- row-level security policies
+- storage policies for analysis images
+- `get_dashboard_stats()` RPC function
+
+## Related Modules
+
+- Inference API: [`../inference_service/README.md`](../inference_service/README.md)
+- Training pipeline: [`../skin_lesion_classifier/README.md`](../skin_lesion_classifier/README.md)
+
+
+
 
