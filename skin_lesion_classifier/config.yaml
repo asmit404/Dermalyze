@@ -121,9 +121,9 @@ output:
 # -----------------------------------------------------------------------------
 evaluation:
   tta:
-    use_tta: false
+    use_tta: true
     mode: full
     aggregation: mean
-    use_clahe_tta: false
+    use_clahe_tta: true
     clahe_clip_limit: 2.0
     clahe_grid_size: 8

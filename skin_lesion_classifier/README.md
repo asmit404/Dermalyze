@@ -30,10 +30,10 @@ Aliases (for example `efficientnet`, `convnext`, `resnest-101`) are resolved in 
 
 ## Current Default Configuration (config.yaml)
 
-- `model.backbone: efficientne` (set this to a supported key such as `resnest_101` before training)
+- `model.backbone: efficientnetv2_s` (set this to a supported key such as `resnest_101` before training)
 - `model.image_size: 224`
 - `data.use_metadata: true`
-- `data.segmentation.enabled: false`
+- `data.segmentation.enabled: true`
 - `data.segmentation.required: true`
 - `data.segmentation.masks_dir: data/HAM10000_Segmentations`
 - `training.epochs: 40` with two-stage schedule (`stage1_epochs: 5`, `stage2_epochs: 35`)

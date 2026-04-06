@@ -350,6 +350,7 @@ This document explains all supported parameters in `config.yaml`, including vali
 - **Type:** float
 - **Default:** `0.35`  
 - **Description:** Inverse-frequency sampling power (`0`=no weighting effect, `1`=full).
+- **Notes:** Explicit `0.0` is valid and preserved. Fallback default is applied only when the config value is `null`.
 
 ### `training.augmentation`
 
@@ -461,6 +462,7 @@ This document explains all supported parameters in `config.yaml`, including vali
 - **Type:** float
 - **Default:** `0.0`  
 - **Description:** Power for class-weight computation from training frequencies.
+- **Notes:** Explicit `0.0` is valid and preserved. Fallback default is applied only when the config value is `null`.
 
 ### `loss.alpha`
 
