@@ -106,6 +106,13 @@ class HAM10000Dataset(Dataset):
             if mask_filename_suffixes is not None
             else ["", "_segmentation", "_mask"]
         )
+        self.mask_search_dirs: list[Path] = []
+        if self.masks_dir is not None:
+            self.mask_search_dirs.append(self.masks_dir)
+            for nested_name in ("images", "masks"):
+                nested_dir = self.masks_dir / nested_name
+                if nested_dir.is_dir():
+                    self.mask_search_dirs.append(nested_dir)
 
         if self.use_segmentation_roi_crop and self.masks_dir is None:
             raise ValueError(
@@ -166,14 +173,15 @@ class HAM10000Dataset(Dataset):
 
     def _get_mask_path(self, image_id: str) -> Optional[Path]:
         """Get the full path to a mask file, if available."""
-        if self.masks_dir is None:
+        if not self.mask_search_dirs:
             return None
 
-        for suffix in self.mask_filename_suffixes:
-            for ext in [".png", ".jpg", ".jpeg", ".PNG", ".JPG", ".JPEG"]:
-                candidate = self.masks_dir / f"{image_id}{suffix}{ext}"
-                if candidate.exists():
-                    return candidate
+        for base_dir in self.mask_search_dirs:
+            for suffix in self.mask_filename_suffixes:
+                for ext in [".png", ".jpg", ".jpeg", ".PNG", ".JPG", ".JPEG"]:
+                    candidate = base_dir / f"{image_id}{suffix}{ext}"
+                    if candidate.exists():
+                        return candidate
         return None
 
     def _validate_masks(self) -> None:
@@ -184,10 +192,15 @@ class HAM10000Dataset(Dataset):
                 missing.append(img_id)
 
         if missing and len(missing) <= 10:
-            raise FileNotFoundError(f"Missing segmentation masks: {missing}")
+            raise FileNotFoundError(
+                "Missing segmentation masks: "
+                f"{missing}. "
+                "Set data.segmentation.required=false to allow fallback to uncropped images."
+            )
         elif missing:
             raise FileNotFoundError(
-                f"Missing {len(missing)} segmentation masks. First 10: {missing[:10]}"
+                f"Missing {len(missing)} segmentation masks. First 10: {missing[:10]}. "
+                "Set data.segmentation.required=false to allow fallback to uncropped images."
             )
 
     def _crop_with_segmentation_mask(self, image: Image.Image, mask_path: Path) -> Image.Image:
@@ -257,7 +270,8 @@ class HAM10000Dataset(Dataset):
             if mask_path is None:
                 if self.segmentation_required:
                     raise FileNotFoundError(
-                        f"Missing segmentation mask for image_id={image_id!r}"
+                        f"Missing segmentation mask for image_id={image_id!r}. "
+                        "Set data.segmentation.required=false to allow fallback to uncropped images."
                     )
             else:
                 image = self._crop_with_segmentation_mask(image, mask_path)

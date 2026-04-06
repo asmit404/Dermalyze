@@ -114,6 +114,7 @@ This document explains all supported parameters in `config.yaml`, including vali
 - **Type:** string (path)
 - **Default:** `data/HAM10000_Segmentations`
 - **Description:** Directory containing segmentation mask files.
+- **Lookup behavior:** Loader checks this directory and also common nested paths such as `masks_dir/images` and `masks_dir/masks`.
 
 ### `data.segmentation.required`
 

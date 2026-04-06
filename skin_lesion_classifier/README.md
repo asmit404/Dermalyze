@@ -55,9 +55,8 @@ data/
     ground_truth.csv
     metadata.csv
   HAM10000_Segmentations/
-    ISIC_XXXX.png
-    ISIC_XXXX_segmentation.png
-    ISIC_XXXX_mask.png
+    images/
+      ISIC_XXXX_segmentation.png
   HAM10000_Val/
     images/
     ground_truth.csv
@@ -68,7 +67,8 @@ data/
 
 `ground_truth.csv` must include one-hot class columns: `MEL,NV,BCC,AKIEC,BKL,DF,VASC`.
 
-Segmentation directory is optional unless `data.segmentation.required: true`.
+Segmentation directory is optional unless `data.segmentation.enabled: true`.
+Mask lookup supports both `data.segmentation.masks_dir` and nested folders like `data.segmentation.masks_dir/images`.
 
 ## Setup
 
