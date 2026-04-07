@@ -706,18 +706,45 @@ def save_checkpoint(
     checkpoint_path = output_dir / "checkpoint_latest.pt"
     torch.save(checkpoint, str(checkpoint_path))
 
+    def _build_export_model(
+        best_model_state_dict: Dict[str, torch.Tensor],
+    ) -> nn.Module:
+        """Build a CPU model instance for TorchScript export."""
+        export_model = model_builder()
+        cpu_state_dict = {
+            name: tensor.detach().cpu() for name, tensor in best_model_state_dict.items()
+        }
+        export_model.load_state_dict(cpu_state_dict)
+        export_model.eval()
+        return export_model
+
+    def _clear_torchscript_class_state() -> bool:
+        """Clear TorchScript class registry when duplicate method definitions occur."""
+        jit_state = getattr(torch.jit, "_state", None)
+        clear_fn = getattr(jit_state, "_clear_class_state", None)
+        if callable(clear_fn):
+            clear_fn()
+            return True
+        return False
+
     def _export_torchscript(best_model_state_dict: Dict[str, torch.Tensor]) -> None:
         """Export TorchScript model for inference portability."""
         try:
-            export_model = model_builder()
-            cpu_state_dict = {
-                name: tensor.detach().cpu()
-                for name, tensor in best_model_state_dict.items()
-            }
-            export_model.load_state_dict(cpu_state_dict)
-            export_model.eval()
+            export_model = _build_export_model(best_model_state_dict)
+            try:
+                scripted_model = torch.jit.script(export_model)
+            except Exception as script_exc:
+                if "Can't redefine method: forward on class" not in str(script_exc):
+                    raise
+                if not _clear_torchscript_class_state():
+                    raise
 
-            scripted_model = torch.jit.script(export_model)
+                logger.info(
+                    "TorchScript class state cleared after forward redefinition; retrying export once."
+                )
+                export_model = _build_export_model(best_model_state_dict)
+                scripted_model = torch.jit.script(export_model)
+
             torchscript_path = output_dir / "checkpoint_best_torchscript.pt"
             scripted_model.save(str(torchscript_path))
             logger.info(f"Saved TorchScript model to: {torchscript_path}")

@@ -186,7 +186,7 @@ class MultiInputClassifier(nn.Module):
         else:
             if metadata.ndim != 2:
                 raise RuntimeError(
-                    f"Expected metadata to have shape [B, {self.metadata_dim}], got {tuple(metadata.shape)}"
+                    f"Expected metadata to have 2 dims [B, {self.metadata_dim}], got ndim={metadata.ndim}"
                 )
             if metadata.size(1) != self.metadata_dim:
                 raise RuntimeError(
