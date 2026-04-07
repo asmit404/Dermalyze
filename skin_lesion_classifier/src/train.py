@@ -808,14 +808,9 @@ def train(
     Main training function.
 
     Args:
-    project_root = Path(__file__).resolve().parent.parent
-    labels_csv = Path(data_config.get("labels_csv", "data/HAM10000/labels.csv"))
-    images_dir = Path(data_config.get("images_dir", "data/HAM10000/images"))
-    if not labels_csv.is_absolute():
-        labels_csv = (project_root / labels_csv).resolve()
-    if not images_dir.is_absolute():
-        images_dir = (project_root / images_dir).resolve()
-        resume_from: Path to checkpoint to resume from
+        config: Training configuration dictionary.
+        output_dir: Directory for checkpoints, logs, and artifacts.
+        resume_from: Optional checkpoint path to resume training from.
     """
     # Set random seed (training)
     seed = config.get("training", {}).get("seed", 42)
