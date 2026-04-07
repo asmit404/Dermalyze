@@ -396,8 +396,8 @@ class SkinLesionPredictor:
                 probs_np = probs.detach().cpu().numpy()
                 predicted_idx = int(np.argmax(probs_np))
 
-                # Generate heatmap for predicted class
-                heatmap = gradcam.generate(tensor.detach().clone(), predicted_idx)
+                # Generate heatmap from the same forward pass to keep hooks aligned
+                heatmap = gradcam.generate_from_output(logits, predicted_idx)
                 gradcam_base64 = heatmap_to_base64(
                     pil_image, heatmap, alpha=gradcam_alpha, colormap=gradcam_colormap
                 )

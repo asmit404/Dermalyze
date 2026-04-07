@@ -91,6 +91,25 @@ class GradCAM:
         # Forward pass
         output = self.model(input_tensor)
 
+        return self.generate_from_output(output, target_class)
+
+    def generate_from_output(
+        self,
+        output: torch.Tensor,
+        target_class: Optional[int] = None,
+    ) -> np.ndarray:
+        """Generate Grad-CAM heatmap from an already-computed model output.
+
+        Args:
+            output: Model logits from a forward pass where hooks captured activations
+            target_class: Class index to generate CAM for. If None, uses
+                         the predicted class.
+
+        Returns:
+            Normalized heatmap as numpy array (H, W) with values in [0, 1]
+        """
+        self.model.eval()
+
         if target_class is None:
             target_class = output.argmax(dim=1).item()
 
@@ -102,20 +121,23 @@ class GradCAM:
         one_hot[0, target_class] = 1.0
         output.backward(gradient=one_hot, retain_graph=True)
 
-        # Get activations and gradients
+        return self._compute_cam_from_captured_tensors()
+
+    def _compute_cam_from_captured_tensors(self) -> np.ndarray:
+        """Compute normalized CAM from hook-captured activations and gradients."""
         activations = self.activations  # (1, C, H, W)
         gradients = self.gradients  # (1, C, H, W)
 
         if activations is None or gradients is None:
             raise RuntimeError("Failed to capture activations or gradients")
 
-        # Global average pooling of gradients to get weights
+        # Global average pooling of gradients to get per-channel weights
         weights = gradients.mean(dim=(2, 3), keepdim=True)  # (1, C, 1, 1)
 
         # Weighted combination of activation maps
         cam = (weights * activations).sum(dim=1, keepdim=True)  # (1, 1, H, W)
 
-        # ReLU to keep only positive contributions
+        # Keep only positive contributions
         cam = F.relu(cam)
 
         # Normalize to [0, 1]
