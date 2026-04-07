@@ -498,10 +498,14 @@ def main() -> None:
         )
     except KeyboardInterrupt:
         interrupted = True
-        print("\nInterrupted by user (Ctrl+C). Preserving study state and exiting cleanly...")
+        print(
+            "\nInterrupted by user (Ctrl+C). Preserving study state and exiting cleanly..."
+        )
 
     completed_trials = [
-        trial for trial in study.trials if trial.state == optuna.trial.TrialState.COMPLETE
+        trial
+        for trial in study.trials
+        if trial.state == optuna.trial.TrialState.COMPLETE
     ]
 
     if not completed_trials:

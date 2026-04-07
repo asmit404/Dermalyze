@@ -994,9 +994,7 @@ def train(
     cutmix_prob = float(0.5 if cutmix_prob_cfg is None else cutmix_prob_cfg)
     sampling_weight_power_cfg = train_config.get("sampling_weight_power", 1.0)
     weighted_sampling_power = float(
-        1.0
-        if sampling_weight_power_cfg is None
-        else sampling_weight_power_cfg
+        1.0 if sampling_weight_power_cfg is None else sampling_weight_power_cfg
     )
     sampling_weight_min_cfg = train_config.get("sampling_weight_min", None)
     weighted_sampling_min_weight = (
@@ -1073,9 +1071,9 @@ def train(
     augmentation_config: Optional[Dict[str, Any]] = None
     if isinstance(augmentation_config_raw, dict):
         augmentation_config = dict(augmentation_config_raw)
-        augmentation_strength = str(
-            augmentation_config.get("type", "medium")
-        ).strip().lower()
+        augmentation_strength = (
+            str(augmentation_config.get("type", "medium")).strip().lower()
+        )
         augmentation_config["type"] = augmentation_strength
     elif isinstance(augmentation_config_raw, str):
         augmentation_strength = augmentation_config_raw.strip().lower()

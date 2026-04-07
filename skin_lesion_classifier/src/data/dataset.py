@@ -10,9 +10,8 @@ and augmenting the HAM10000 dermoscopic image dataset. It implements:
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
-from typing import Any, Callable, Literal, Optional, Tuple
+from typing import Any, Callable, Literal, Optional, Tuple, cast
 
 import numpy as np
 import pandas as pd
@@ -23,10 +22,9 @@ from sklearn.model_selection import (
     StratifiedGroupKFold,
     train_test_split,
 )
+from src.data.metadata_encoder import MetadataEncoder
 from torch.utils.data import DataLoader, Dataset, WeightedRandomSampler
 from torchvision import transforms
-
-from src.data.metadata_encoder import MetadataEncoder
 
 # HAM10000 class labels and their full names
 CLASS_LABELS = {
@@ -140,7 +138,7 @@ def _build_class_conditioned_randaugment(
     )
 
 
-class HAM10000Dataset(Dataset):
+class HAM10000Dataset:
     """
     PyTorch Dataset for HAM10000 skin lesion images.
 
@@ -215,7 +213,7 @@ class HAM10000Dataset(Dataset):
 
         # Default metadata columns from HAM10000 dataset
         if metadata_columns is None:
-            self.metadata_columns = ['age', 'sex', 'localization']
+            self.metadata_columns = ["age", "sex", "localization"]
         else:
             self.metadata_columns = metadata_columns
 
@@ -232,7 +230,9 @@ class HAM10000Dataset(Dataset):
 
     def _validate_metadata_columns(self) -> None:
         """Validate that requested metadata columns exist in the DataFrame."""
-        missing_cols = [col for col in self.metadata_columns if col not in self.df.columns]
+        missing_cols = [
+            col for col in self.metadata_columns if col not in self.df.columns
+        ]
         if missing_cols:
             available_cols = list(self.df.columns)
             raise ValueError(
@@ -297,7 +297,9 @@ class HAM10000Dataset(Dataset):
                 "Set data.segmentation.required=false to allow fallback to uncropped images."
             )
 
-    def _crop_with_segmentation_mask(self, image: Image.Image, mask_path: Path) -> Image.Image:
+    def _crop_with_segmentation_mask(
+        self, image: Image.Image, mask_path: Path
+    ) -> Image.Image:
         """Crop image to lesion bounding box derived from segmentation mask."""
         mask = Image.open(mask_path).convert("L")
         mask_np = np.array(mask, dtype=np.uint8)
@@ -339,7 +341,7 @@ class HAM10000Dataset(Dataset):
     def __len__(self) -> int:
         return len(self.df)
 
-    def __getitem__(self, idx: int) -> Tuple[torch.Tensor, int] | Tuple[torch.Tensor, int, dict] | Tuple[torch.Tensor, int, torch.Tensor]:
+    def __getitem__(self, idx: int) -> Any:
         """
         Get a sample from the dataset.
 
@@ -387,6 +389,11 @@ class HAM10000Dataset(Dataset):
         # Apply transforms
         if self.transform:
             image = self.transform(image)
+        else:
+            image = transforms.ToTensor()(image)
+
+        if not isinstance(image, torch.Tensor):
+            raise TypeError("Transform pipeline must return a torch.Tensor")
 
         if self.target_transform:
             label_idx = self.target_transform(label_idx)
@@ -561,21 +568,23 @@ def get_transforms(
                 )
             ]
         elif augmentation_strength == "randaugment":
+            randaugment_ops = []
+            if not use_class_conditioned_randaugment:
+                randaugment_ops = [
+                    transforms.RandAugment(
+                        num_ops=max(1, int(randaugment_num_ops)),
+                        magnitude=_clamp_randaugment_magnitude(randaugment_magnitude),
+                    )
+                ]
+
             aug_transforms = [
                 transforms.RandomHorizontalFlip(p=0.5),
                 transforms.RandomVerticalFlip(p=0.5),
+                *randaugment_ops,
                 transforms.RandomAffine(
                     degrees=0, translate=(0.1, 0.1), scale=(0.9, 1.1)
                 ),
             ]
-            if not use_class_conditioned_randaugment:
-                aug_transforms.insert(
-                    2,
-                    transforms.RandAugment(
-                        num_ops=max(1, int(randaugment_num_ops)),
-                        magnitude=_clamp_randaugment_magnitude(randaugment_magnitude),
-                    ),
-                )
             post_transforms = [
                 transforms.RandomErasing(
                     p=0.1, scale=(0.02, 0.12), ratio=(0.3, 3.3), value="random"
@@ -665,7 +674,9 @@ def load_and_split_data(
         missing_mask = groups.isna()
         if missing_mask.any():
             missing_idx = groups.index[missing_mask]
-            groups.loc[missing_mask] = [f"{prefix}_missing_{idx}" for idx in missing_idx]
+            groups.loc[missing_mask] = [
+                f"{prefix}_missing_{idx}" for idx in missing_idx
+            ]
         return groups.astype(str)
 
     if use_stratified_group_kfold:
@@ -863,7 +874,9 @@ def create_dataloaders(
             augmentation_strength,
             randaugment_num_ops=randaugment_num_ops,
             randaugment_magnitude=randaugment_magnitude,
-            use_class_conditioned_randaugment=(class_conditioned_randaugment is not None),
+            use_class_conditioned_randaugment=(
+                class_conditioned_randaugment is not None
+            ),
         ),
         use_metadata=use_metadata,
         metadata_columns=metadata_columns,
@@ -914,7 +927,8 @@ def create_dataloaders(
         if (
             weighted_sampling_min_weight is not None
             and weighted_sampling_max_weight is not None
-            and float(weighted_sampling_min_weight) > float(weighted_sampling_max_weight)
+            and float(weighted_sampling_min_weight)
+            > float(weighted_sampling_max_weight)
         ):
             raise ValueError(
                 "weighted_sampling_min_weight cannot be greater than weighted_sampling_max_weight"
@@ -926,7 +940,7 @@ def create_dataloaders(
             max_weight=weighted_sampling_max_weight,
         )
         train_sampler = WeightedRandomSampler(
-            weights=sample_weights,
+            weights=sample_weights.tolist(),
             num_samples=len(train_dataset),
             replacement=True,
         )
@@ -934,7 +948,7 @@ def create_dataloaders(
 
     # Create DataLoaders with optimized settings
     # Common kwargs for all loaders
-    common_kwargs = {
+    common_kwargs: dict[str, Any] = {
         "num_workers": num_workers,
         "pin_memory": pin_memory,
     }
@@ -947,7 +961,7 @@ def create_dataloaders(
             common_kwargs["persistent_workers"] = persistent_workers
 
     train_loader = DataLoader(
-        train_dataset,
+        cast(Dataset[Any], train_dataset),
         batch_size=batch_size,
         shuffle=train_shuffle,
         sampler=train_sampler,
@@ -956,14 +970,14 @@ def create_dataloaders(
     )
 
     val_loader = DataLoader(
-        val_dataset,
+        cast(Dataset[Any], val_dataset),
         batch_size=batch_size,
         shuffle=False,
         **common_kwargs,
     )
 
     test_loader = DataLoader(
-        test_dataset,
+        cast(Dataset[Any], test_dataset),
         batch_size=batch_size,
         shuffle=False,
         **common_kwargs,
