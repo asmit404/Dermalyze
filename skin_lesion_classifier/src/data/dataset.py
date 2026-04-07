@@ -341,7 +341,7 @@ class HAM10000Dataset:
     def __len__(self) -> int:
         return len(self.df)
 
-    def __getitem__(self, idx: int) -> Any:
+    def __getitem__(self, idx: Any) -> Any:
         """
         Get a sample from the dataset.
 

@@ -51,8 +51,8 @@ class MetadataEncoder:
 
         # Default values for missing data
         self.default_age = 50.0  # Will be updated during fit
-        self.default_sex = 'unknown'
-        self.default_localization = 'unknown'
+        self.default_sex = "unknown"
+        self.default_localization = "unknown"
 
     def fit(self, df: pd.DataFrame) -> MetadataEncoder:
         """
@@ -66,7 +66,7 @@ class MetadataEncoder:
         """
         # Compute age statistics (ignoring NaN)
         if self.age_column in df.columns:
-            age_values = pd.to_numeric(df[self.age_column], errors='coerce').dropna()
+            age_values = pd.to_numeric(df[self.age_column], errors="coerce").dropna()
             if len(age_values) > 0:
                 self.age_mean = float(age_values.mean())
                 self.age_std = float(age_values.std())
@@ -88,9 +88,9 @@ class MetadataEncoder:
             sex_values = (
                 df[self.sex_column].dropna().astype(str).str.lower().unique().tolist()
             )
-            self.sex_categories = sorted(sex_values) + ['unknown']
+            self.sex_categories = sorted(sex_values) + ["unknown"]
         else:
-            self.sex_categories = ['unknown']
+            self.sex_categories = ["unknown"]
 
         # Get unique localization categories
         if self.localization_column in df.columns:
@@ -102,9 +102,9 @@ class MetadataEncoder:
                 .unique()
                 .tolist()
             )
-            self.localization_categories = sorted(loc_values) + ['unknown']
+            self.localization_categories = sorted(loc_values) + ["unknown"]
         else:
-            self.localization_categories = ['unknown']
+            self.localization_categories = ["unknown"]
 
         return self
 
@@ -131,8 +131,8 @@ class MetadataEncoder:
                 age = self.default_age
 
         # Normalize age
-        if self.age_std and self.age_std > 0:
-            age_normalized = (age - self.age_mean) / self.age_std
+        if self.age_std is not None and self.age_std > 0 and self.age_mean is not None:
+            age_normalized = (age - float(self.age_mean)) / float(self.age_std)
         else:
             age_normalized = 0.0
         features.append(age_normalized)
@@ -143,7 +143,9 @@ class MetadataEncoder:
             sex = self.default_sex
         sex = str(sex).lower()
 
-        sex_encoded = [1.0 if cat.lower() == sex else 0.0 for cat in self.sex_categories]
+        sex_encoded = [
+            1.0 if cat.lower() == sex else 0.0 for cat in (self.sex_categories or [])
+        ]
         features.extend(sex_encoded)
 
         # Encode localization (one-hot)
@@ -152,8 +154,10 @@ class MetadataEncoder:
             localization = self.default_localization
         localization = str(localization).lower()
 
-        loc_encoded = [1.0 if cat.lower() == localization else 0.0
-                       for cat in self.localization_categories]
+        loc_encoded = [
+            1.0 if cat.lower() == localization else 0.0
+            for cat in (self.localization_categories or [])
+        ]
         features.extend(loc_encoded)
 
         return torch.tensor(features, dtype=torch.float32)
@@ -165,7 +169,13 @@ class MetadataEncoder:
         Returns:
             Total feature dimension (1 for age + len(sex_categories) + len(localization_categories))
         """
-        return 1 + len(self.sex_categories) + len(self.localization_categories)
+        sex_dim = len(self.sex_categories) if self.sex_categories is not None else 0
+        loc_dim = (
+            len(self.localization_categories)
+            if self.localization_categories is not None
+            else 0
+        )
+        return 1 + sex_dim + loc_dim
 
     def get_feature_names(self) -> list[str]:
         """
@@ -174,9 +184,11 @@ class MetadataEncoder:
         Returns:
             List of feature names
         """
-        names = ['age_normalized']
-        names.extend([f'sex_{cat}' for cat in self.sex_categories])
-        names.extend([f'loc_{cat}' for cat in self.localization_categories])
+        names = ["age_normalized"]
+        if self.sex_categories is not None:
+            names.extend([f"sex_{cat}" for cat in self.sex_categories])
+        if self.localization_categories is not None:
+            names.extend([f"loc_{cat}" for cat in self.localization_categories])
         return names
 
     def save_state(self) -> dict:
@@ -187,16 +199,16 @@ class MetadataEncoder:
             Dictionary containing encoder parameters
         """
         return {
-            'age_mean': self.age_mean,
-            'age_std': self.age_std,
-            'sex_categories': self.sex_categories,
-            'localization_categories': self.localization_categories,
-            'age_column': self.age_column,
-            'sex_column': self.sex_column,
-            'localization_column': self.localization_column,
-            'default_age': self.default_age,
-            'default_sex': self.default_sex,
-            'default_localization': self.default_localization,
+            "age_mean": self.age_mean,
+            "age_std": self.age_std,
+            "sex_categories": self.sex_categories,
+            "localization_categories": self.localization_categories,
+            "age_column": self.age_column,
+            "sex_column": self.sex_column,
+            "localization_column": self.localization_column,
+            "default_age": self.default_age,
+            "default_sex": self.default_sex,
+            "default_localization": self.default_localization,
         }
 
     @classmethod
@@ -211,15 +223,15 @@ class MetadataEncoder:
             Initialized MetadataEncoder
         """
         encoder = cls(
-            age_mean=state['age_mean'],
-            age_std=state['age_std'],
-            sex_categories=state['sex_categories'],
-            localization_categories=state['localization_categories'],
-            age_column=state.get('age_column', 'age'),
-            sex_column=state.get('sex_column', 'sex'),
-            localization_column=state.get('localization_column', 'localization'),
+            age_mean=state["age_mean"],
+            age_std=state["age_std"],
+            sex_categories=state["sex_categories"],
+            localization_categories=state["localization_categories"],
+            age_column=state.get("age_column", "age"),
+            sex_column=state.get("sex_column", "sex"),
+            localization_column=state.get("localization_column", "localization"),
         )
-        encoder.default_age = state.get('default_age', 50.0)
-        encoder.default_sex = state.get('default_sex', 'unknown')
-        encoder.default_localization = state.get('default_localization', 'unknown')
+        encoder.default_age = state.get("default_age", 50.0)
+        encoder.default_sex = state.get("default_sex", "unknown")
+        encoder.default_localization = state.get("default_localization", "unknown")
         return encoder

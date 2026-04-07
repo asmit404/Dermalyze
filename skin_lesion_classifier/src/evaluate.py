@@ -34,7 +34,7 @@ from sklearn.metrics import (
     roc_auc_score,
     roc_curve,
 )
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, Dataset
 from tqdm import tqdm
 
 # Add parent directory to path for imports
@@ -1452,7 +1452,7 @@ def evaluate(
     )
 
     test_loader = DataLoader(
-        test_dataset,
+        cast(Dataset[Any], test_dataset),
         batch_size=batch_size,
         shuffle=False,
         num_workers=num_workers,
