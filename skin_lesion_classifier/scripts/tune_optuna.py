@@ -138,7 +138,13 @@ def apply_ham10000_search_space(
 
     model_cfg["dropout_rate"] = trial.suggest_float("dropout_rate", 0.2, 0.6)
 
-    train_cfg["augmentation"] = "randaugment"
+    existing_augmentation = train_cfg.get("augmentation", "randaugment")
+    if isinstance(existing_augmentation, dict):
+        augmentation_cfg = dict(existing_augmentation)
+        augmentation_cfg["type"] = "randaugment"
+        train_cfg["augmentation"] = augmentation_cfg
+    else:
+        train_cfg["augmentation"] = "randaugment"
 
     use_weighted_sampling = bool(train_cfg.get("use_weighted_sampling", True))
     train_cfg["sampling_weight_power"] = trial.suggest_float(

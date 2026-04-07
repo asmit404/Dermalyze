@@ -21,7 +21,7 @@ import sys
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, Optional, Tuple, cast
+from typing import Any, Dict, Literal, Optional, Tuple, cast
 
 import numpy as np
 import torch
@@ -1069,6 +1069,31 @@ def train(
     stage1_weight_decay = train_config.get("stage1_weight_decay", weight_decay)
     stage2_weight_decay = train_config.get("stage2_weight_decay", weight_decay)
 
+    augmentation_config_raw = train_config.get("augmentation", "medium")
+    augmentation_config: Optional[Dict[str, Any]] = None
+    if isinstance(augmentation_config_raw, dict):
+        augmentation_config = dict(augmentation_config_raw)
+        augmentation_strength = str(
+            augmentation_config.get("type", "medium")
+        ).strip().lower()
+        augmentation_config["type"] = augmentation_strength
+    elif isinstance(augmentation_config_raw, str):
+        augmentation_strength = augmentation_config_raw.strip().lower()
+    else:
+        raise ValueError(
+            "training.augmentation must be a string or a mapping with a 'type' field"
+        )
+
+    allowed_augmentations = {"light", "medium", "heavy", "domain", "randaugment"}
+    if augmentation_strength not in allowed_augmentations:
+        raise ValueError(
+            "training.augmentation.type must be one of: light, medium, heavy, domain, randaugment"
+        )
+    augmentation_strength_literal = cast(
+        Literal["light", "medium", "heavy", "domain", "randaugment"],
+        augmentation_strength,
+    )
+
     # Exponential Moving Average (EMA) settings
     ema_config = train_config.get("ema", {})
     ema_enabled = bool(ema_config.get("enabled", False))
@@ -1087,7 +1112,8 @@ def train(
         batch_size=batch_size,
         num_workers=num_workers,
         image_size=config.get("model", {}).get("image_size", 224),
-        augmentation_strength=train_config.get("augmentation", "medium"),
+        augmentation_strength=augmentation_strength_literal,
+        augmentation_config=augmentation_config,
         use_weighted_sampling=train_config.get("use_weighted_sampling", True),
         weighted_sampling_power=weighted_sampling_power,
         weighted_sampling_min_weight=weighted_sampling_min_weight,

@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import Callable, Literal, Optional, Tuple
+from typing import Any, Callable, Literal, Optional, Tuple
 
 import numpy as np
 import pandas as pd
@@ -48,6 +48,98 @@ IMAGENET_MEAN = [0.485, 0.456, 0.406]
 IMAGENET_STD = [0.229, 0.224, 0.225]
 
 
+def _clamp_randaugment_magnitude(magnitude: int) -> int:
+    """Clamp RandAugment magnitude to torchvision's expected range."""
+    return max(0, min(int(magnitude), 30))
+
+
+class ClassConditionedRandAugment:
+    """Apply RandAugment with class-specific magnitudes."""
+
+    def __init__(
+        self,
+        default_magnitude: int = 9,
+        num_ops: int = 2,
+        class_magnitudes: Optional[dict[int, int]] = None,
+    ) -> None:
+        self.default_magnitude = _clamp_randaugment_magnitude(default_magnitude)
+        self.num_ops = max(1, int(num_ops))
+        self.class_magnitudes = {
+            int(idx): _clamp_randaugment_magnitude(magnitude)
+            for idx, magnitude in (class_magnitudes or {}).items()
+        }
+        self._randaugment_cache: dict[int, transforms.RandAugment] = {}
+
+    def _get_augmenter(self, magnitude: int) -> transforms.RandAugment:
+        magnitude = _clamp_randaugment_magnitude(magnitude)
+        augmenter = self._randaugment_cache.get(magnitude)
+        if augmenter is None:
+            augmenter = transforms.RandAugment(
+                num_ops=self.num_ops,
+                magnitude=magnitude,
+            )
+            self._randaugment_cache[magnitude] = augmenter
+        return augmenter
+
+    def __call__(self, image: Image.Image, label_idx: int) -> Image.Image:
+        magnitude = self.class_magnitudes.get(int(label_idx), self.default_magnitude)
+        return self._get_augmenter(magnitude)(image)
+
+
+def _build_class_conditioned_randaugment(
+    train_df: pd.DataFrame,
+    augmentation_strength: str,
+    augmentation_config: Optional[dict[str, Any]],
+) -> Optional[ClassConditionedRandAugment]:
+    """Build a class-conditioned RandAugment policy when configured."""
+    if augmentation_strength != "randaugment" or augmentation_config is None:
+        return None
+
+    default_magnitude = _clamp_randaugment_magnitude(
+        int(float(augmentation_config.get("magnitude", 9)))
+    )
+    num_ops = int(float(augmentation_config.get("num_ops", 2)))
+    if num_ops < 1:
+        raise ValueError("training.augmentation.num_ops must be >= 1")
+
+    class_magnitudes: dict[int, int] = {}
+    for label, idx in LABEL_TO_IDX.items():
+        key = f"{label}_magnitude"
+        if key in augmentation_config and augmentation_config[key] is not None:
+            class_magnitudes[idx] = _clamp_randaugment_magnitude(
+                int(float(augmentation_config[key]))
+            )
+
+    if bool(augmentation_config.get("minority_boost", False)):
+        class_counts = train_df["label"].value_counts()
+        max_count = int(class_counts.max()) if not class_counts.empty else 0
+        minority_boost_delta = int(
+            float(augmentation_config.get("minority_boost_delta", 2))
+        )
+        minority_magnitude_cfg = augmentation_config.get("minority_magnitude", None)
+
+        for label, idx in LABEL_TO_IDX.items():
+            count = int(class_counts.get(label, 0))
+            is_minority = count < max_count
+            if not is_minority or idx in class_magnitudes:
+                continue
+
+            if minority_magnitude_cfg is None:
+                boosted_magnitude = default_magnitude + minority_boost_delta
+            else:
+                boosted_magnitude = int(float(minority_magnitude_cfg))
+            class_magnitudes[idx] = _clamp_randaugment_magnitude(boosted_magnitude)
+
+    if not class_magnitudes:
+        return None
+
+    return ClassConditionedRandAugment(
+        default_magnitude=default_magnitude,
+        num_ops=num_ops,
+        class_magnitudes=class_magnitudes,
+    )
+
+
 class HAM10000Dataset(Dataset):
     """
     PyTorch Dataset for HAM10000 skin lesion images.
@@ -77,6 +169,7 @@ class HAM10000Dataset(Dataset):
         segmentation_crop_margin: float = 0.1,
         segmentation_required: bool = False,
         mask_filename_suffixes: Optional[list[str]] = None,
+        class_conditioned_randaugment: Optional[ClassConditionedRandAugment] = None,
     ):
         """
         Initialize the dataset.
@@ -101,6 +194,7 @@ class HAM10000Dataset(Dataset):
         self.segmentation_mask_threshold = int(segmentation_mask_threshold)
         self.segmentation_crop_margin = max(float(segmentation_crop_margin), 0.0)
         self.segmentation_required = bool(segmentation_required)
+        self.class_conditioned_randaugment = class_conditioned_randaugment
         self.mask_filename_suffixes = (
             list(mask_filename_suffixes)
             if mask_filename_suffixes is not None
@@ -287,6 +381,9 @@ class HAM10000Dataset(Dataset):
             # Sentinel used for unlabeled rows (e.g., external test sets).
             label_idx = -1
 
+        if self.class_conditioned_randaugment is not None and label_idx >= 0:
+            image = self.class_conditioned_randaugment(image, label_idx)
+
         # Apply transforms
         if self.transform:
             image = self.transform(image)
@@ -379,6 +476,9 @@ def get_transforms(
     augmentation_strength: Literal[
         "light", "medium", "heavy", "domain", "randaugment"
     ] = "medium",
+    randaugment_num_ops: int = 2,
+    randaugment_magnitude: int = 9,
+    use_class_conditioned_randaugment: bool = False,
 ) -> transforms.Compose:
     """
     Get image transforms for different dataset splits.
@@ -387,6 +487,9 @@ def get_transforms(
         split: Dataset split (train, val, or test)
         image_size: Target image size
         augmentation_strength: Strength of augmentation for training
+        randaugment_num_ops: Number of RandAugment operations
+        randaugment_magnitude: RandAugment magnitude (0-30)
+        use_class_conditioned_randaugment: Whether RandAugment is applied separately per class
 
     Returns:
         Composed transforms
@@ -461,11 +564,18 @@ def get_transforms(
             aug_transforms = [
                 transforms.RandomHorizontalFlip(p=0.5),
                 transforms.RandomVerticalFlip(p=0.5),
-                transforms.RandAugment(num_ops=2, magnitude=9),
                 transforms.RandomAffine(
                     degrees=0, translate=(0.1, 0.1), scale=(0.9, 1.1)
                 ),
             ]
+            if not use_class_conditioned_randaugment:
+                aug_transforms.insert(
+                    2,
+                    transforms.RandAugment(
+                        num_ops=max(1, int(randaugment_num_ops)),
+                        magnitude=_clamp_randaugment_magnitude(randaugment_magnitude),
+                    ),
+                )
             post_transforms = [
                 transforms.RandomErasing(
                     p=0.1, scale=(0.02, 0.12), ratio=(0.3, 3.3), value="random"
@@ -675,6 +785,7 @@ def create_dataloaders(
     augmentation_strength: Literal[
         "light", "medium", "heavy", "domain", "randaugment"
     ] = "medium",
+    augmentation_config: Optional[dict[str, Any]] = None,
     use_weighted_sampling: bool = True,
     weighted_sampling_power: float = 1.0,
     weighted_sampling_min_weight: Optional[float] = None,
@@ -704,6 +815,7 @@ def create_dataloaders(
         num_workers: Number of worker processes for data loading
         image_size: Target image size
         augmentation_strength: Strength of training augmentation
+        augmentation_config: Optional augmentation settings (used for class-conditioned RandAugment)
         use_weighted_sampling: Whether to use weighted sampling for class balance
         weighted_sampling_power: Power for inverse-frequency sampler weights (0=no weighting, 1=full)
         weighted_sampling_min_weight: Optional minimum clamp for class weights
@@ -724,12 +836,35 @@ def create_dataloaders(
     Returns:
         Tuple of (train_loader, val_loader, test_loader)
     """
+    randaugment_num_ops = 2
+    randaugment_magnitude = 9
+    if augmentation_strength == "randaugment" and augmentation_config is not None:
+        randaugment_num_ops = int(float(augmentation_config.get("num_ops", 2)))
+        if randaugment_num_ops < 1:
+            raise ValueError("training.augmentation.num_ops must be >= 1")
+        randaugment_magnitude = _clamp_randaugment_magnitude(
+            int(float(augmentation_config.get("magnitude", 9)))
+        )
+
+    class_conditioned_randaugment = _build_class_conditioned_randaugment(
+        train_df=train_df,
+        augmentation_strength=augmentation_strength,
+        augmentation_config=augmentation_config,
+    )
+
     # Create datasets
     train_dataset = HAM10000Dataset(
         df=train_df,
         images_dir=images_dir,
         masks_dir=masks_dir,
-        transform=get_transforms("train", image_size, augmentation_strength),
+        transform=get_transforms(
+            "train",
+            image_size,
+            augmentation_strength,
+            randaugment_num_ops=randaugment_num_ops,
+            randaugment_magnitude=randaugment_magnitude,
+            use_class_conditioned_randaugment=(class_conditioned_randaugment is not None),
+        ),
         use_metadata=use_metadata,
         metadata_columns=metadata_columns,
         metadata_encoder=metadata_encoder,
@@ -738,6 +873,7 @@ def create_dataloaders(
         segmentation_crop_margin=segmentation_crop_margin,
         segmentation_required=segmentation_required,
         mask_filename_suffixes=mask_filename_suffixes,
+        class_conditioned_randaugment=class_conditioned_randaugment,
     )
 
     val_dataset = HAM10000Dataset(
