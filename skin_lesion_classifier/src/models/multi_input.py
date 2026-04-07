@@ -157,6 +157,13 @@ class MultiInputClassifier(nn.Module):
 
         return features
 
+    def _compute_image_logits(self, image_features: torch.Tensor) -> Optional[torch.Tensor]:
+        """Compute image-only logits from the wrapped image model head when available."""
+        classifier = getattr(self.image_model, "classifier", None)
+        if not isinstance(classifier, nn.Module):
+            return None
+        return classifier(image_features)
+
     def forward(
         self,
         image: torch.Tensor,
@@ -174,6 +181,7 @@ class MultiInputClassifier(nn.Module):
         """
         # Extract image features
         image_features = self._extract_image_features(image)
+        image_logits = self._compute_image_logits(image_features)
 
         # If no metadata provided, use image-only prediction
         if metadata is None:
@@ -210,7 +218,20 @@ class MultiInputClassifier(nn.Module):
             )
 
         # Final classification
-        logits = self.fusion_classifier(fused_features)
+        fusion_logits = self.fusion_classifier(fused_features)
+
+        # Combine fused logits with image-head logits so stage-1 head warmup
+        # updates an active image branch instead of dormant parameters.
+        if image_logits is None:
+            return fusion_logits
+
+        if image_logits.shape != fusion_logits.shape:
+            raise RuntimeError(
+                "Image and fusion logits shape mismatch: "
+                f"image={tuple(image_logits.shape)}, fusion={tuple(fusion_logits.shape)}"
+            )
+
+        logits = fusion_logits + image_logits
 
         return logits
 

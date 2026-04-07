@@ -78,12 +78,20 @@ class MultiInputClassifier(nn.Module):
             "Image model must expose either 'backbone' or 'forward_features'"
         )
 
+    def _compute_image_logits(self, image_features: torch.Tensor) -> Optional[torch.Tensor]:
+        """Compute image-only logits from the wrapped image model head when available."""
+        classifier = getattr(self.image_model, "classifier", None)
+        if not isinstance(classifier, nn.Module):
+            return None
+        return classifier(image_features)
+
     def forward(
         self,
         image: torch.Tensor,
         metadata: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         image_features = self._extract_image_features(image)
+        image_logits = self._compute_image_logits(image_features)
 
         if metadata is None:
             batch_size = image.shape[0]
@@ -96,4 +104,15 @@ class MultiInputClassifier(nn.Module):
 
         metadata_features = self.metadata_mlp(metadata)
         fused_features = torch.cat([image_features, metadata_features], dim=1)
-        return self.fusion_classifier(fused_features)
+        fusion_logits = self.fusion_classifier(fused_features)
+
+        if image_logits is None:
+            return fusion_logits
+
+        if image_logits.shape != fusion_logits.shape:
+            raise RuntimeError(
+                "Image and fusion logits shape mismatch: "
+                f"image={tuple(image_logits.shape)}, fusion={tuple(fusion_logits.shape)}"
+            )
+
+        return fusion_logits + image_logits
