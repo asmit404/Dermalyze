@@ -156,7 +156,6 @@ Generated artifacts in each run directory:
 
 - `checkpoint_latest.pt`
 - `checkpoint_best.pt`
-- `checkpoint_best_torchscript.pt` (best-effort export)
 - `train_split.csv`, `val_split.csv`, `test_split.csv`
 - `training_history.json`
 - `training.log`

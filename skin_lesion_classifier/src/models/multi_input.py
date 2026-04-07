@@ -160,7 +160,7 @@ class MultiInputClassifier(nn.Module):
     def _compute_image_logits(self, image_features: torch.Tensor) -> Optional[torch.Tensor]:
         """Compute image-only logits from the wrapped image model head when available."""
         classifier = getattr(self.image_model, "classifier", None)
-        if not isinstance(classifier, nn.Module):
+        if classifier is None:
             return None
         return classifier(image_features)
 

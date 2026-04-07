@@ -106,16 +106,13 @@ class SkinLesionConvNeXtClassifier(nn.Module):
         for param in self.backbone.parameters():
             param.requires_grad = True
 
-    @torch.jit.unused
     def _forward_with_checkpoint(self, x: torch.Tensor) -> torch.Tensor:
-        """Forward backbone with gradient checkpointing (Python-only path)."""
+        """Forward backbone with gradient checkpointing."""
         return checkpoint(self.backbone, x, use_reentrant=False)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """Forward pass through ConvNeXt backbone and custom head."""
-        if torch.jit.is_scripting() or torch.jit.is_tracing():
-            features = self.backbone(x)
-        elif self.use_gradient_checkpointing and self.training:
+        if self.use_gradient_checkpointing and self.training:
             features = self._forward_with_checkpoint(x)
         else:
             features = self.backbone(x)
