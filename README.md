@@ -24,8 +24,8 @@ Dermalyze/
 | Component | Purpose | Tech Stack |
 |-----------|---------|------------|
 | [**Frontend**](frontend/README.md) | Web UI for image upload and results | React, Vite, TypeScript, Tailwind CSS |
-| [**Inference Service**](inference_service/README.md) | Production-ready classification API | FastAPI, PyTorch, uvicorn |
-| [**Training Pipeline**](skin_lesion_classifier/README.md) | Model training and evaluation | PyTorch, EfficientNet (B0-B7), EfficientNetV2 (S/M/L), ConvNeXt-Tiny, ResNeSt-101, SE-ResNeXt-101 |
+| [**Inference Service**](inference_service/README.md) | Production-ready classification API with Grad-CAM | FastAPI, PyTorch, uvicorn |
+| [**Training Pipeline**](skin_lesion_classifier/README.md) | Model training and evaluation with hyperparameter tuning | PyTorch, EfficientNet (B0-B7), EfficientNetV2 (S/M/L), ConvNeXt-Tiny, ResNeSt-101, SE-ResNeXt-101 |
 
 ## Quick Start
 
@@ -171,16 +171,21 @@ model:
 For complete configuration examples and advanced tuning, see [IMAGE_SIZE_GUIDE.md](IMAGE_SIZE_GUIDE.md).
 
 ### Training & Evaluation
+- **Configurable best checkpoint selection** - Optimize for macro_recall, macro_f1, or custom metrics
+- **Comprehensive macro-averaged metrics** - Track per-class and macro performance for imbalanced datasets
 - **Test-Time Augmentation (TTA)** for improved accuracy
+- **Model explainability with Grad-CAM** - Visual heatmaps showing decision rationale
 - **K-Fold cross-validation** and ensemble training
-- **Hyperparameter tuning** with Optuna
+- **Enhanced hyperparameter tuning** with Optuna - aligned checkpoint selection and explicit eval config
 - **Mixed precision training** (AMP) and gradient checkpointing
-- **Class imbalance handling**: Weighted sampling and loss functions
+- **Class imbalance handling**: Configurable weighted sampling, focal loss, and label smoothing
+- **Class-conditioned augmentation** - Per-class augmentation policies
 
 ### Application Features
 - **User authentication** via Supabase
 - **Analysis history** tracking
 - **Responsive web interface**
+- **Grad-CAM visualizations** for model interpretability
 
 ## Documentation
 
