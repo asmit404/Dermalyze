@@ -196,6 +196,10 @@ def apply_ham10000_search_space(
     ema_cfg["use_for_eval"] = True
     ema_cfg["save_best"] = True
 
+    # Configure best checkpoint selection to use macro_recall_f1_mean
+    train_cfg["best_checkpoint_metric"] = "macro_recall_f1_mean"
+    train_cfg["best_checkpoint_mode"] = "max"
+
     return config
 
 
@@ -264,6 +268,7 @@ def run_trial_training(
 def run_trial_evaluation(
     project_root: Path,
     trial_output_dir: Path,
+    trial_config_path: Path,
     trial_config: Dict[str, Any],
     verbose_subprocess: bool,
 ) -> Dict[str, Any]:
@@ -284,6 +289,8 @@ def run_trial_evaluation(
     command = [
         sys.executable,
         "src/evaluate.py",
+        "--config",
+        str(trial_config_path),
         "--checkpoint",
         str(checkpoint_path),
         "--test-csv",
@@ -456,6 +463,7 @@ def main() -> None:
         eval_metrics = run_trial_evaluation(
             project_root=project_root,
             trial_output_dir=trial_output_dir,
+            trial_config_path=trial_config_path,
             trial_config=trial_config,
             verbose_subprocess=args.verbose_subprocess,
         )

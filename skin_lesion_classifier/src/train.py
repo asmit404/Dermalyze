@@ -28,6 +28,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 import yaml
+from sklearn.metrics import precision_recall_fscore_support
 from torch.amp import GradScaler, autocast
 from torch.optim import AdamW
 from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts, OneCycleLR
@@ -703,7 +704,10 @@ def validate(
         epoch: Current epoch number
 
     Returns:
-        Dictionary of validation metrics
+        Dictionary of validation metrics including:
+        - loss, accuracy (basic metrics)
+        - macro_precision, macro_recall, macro_f1 (per-class averages)
+        - macro_recall_f1_mean (average of macro_recall and macro_f1)
     """
     model.eval()
     metrics = MetricTracker()
@@ -738,7 +742,27 @@ def validate(
     if device.type == "mps":
         torch.mps.synchronize()
 
-    return metrics.compute()
+    basic_metrics = metrics.compute()
+    
+    # Compute macro-averaged per-class metrics
+    all_preds = np.array(metrics.all_preds)
+    all_targets = np.array(metrics.all_targets)
+    
+    if len(all_preds) > 0 and len(all_targets) > 0:
+        precision, recall, f1, _ = precision_recall_fscore_support(
+            all_targets, all_preds, average='macro', zero_division=0
+        )
+        basic_metrics['macro_precision'] = float(precision)
+        basic_metrics['macro_recall'] = float(recall)
+        basic_metrics['macro_f1'] = float(f1)
+        basic_metrics['macro_recall_f1_mean'] = float((recall + f1) / 2.0)
+    else:
+        basic_metrics['macro_precision'] = 0.0
+        basic_metrics['macro_recall'] = 0.0
+        basic_metrics['macro_f1'] = 0.0
+        basic_metrics['macro_recall_f1_mean'] = 0.0
+
+    return basic_metrics
 
 
 def save_checkpoint(
@@ -1408,16 +1432,47 @@ def train(
     # Initialize gradient scaler for mixed precision
     scaler = GradScaler("cuda") if use_grad_scaler else None
 
-    # Early stopping
+    # Best checkpoint metric configuration
+    best_checkpoint_metric = str(train_config.get("best_checkpoint_metric", "val_loss"))
+    best_checkpoint_mode_cfg = train_config.get("best_checkpoint_mode", "auto")
+    
+    # Auto-detect mode based on metric name
+    if best_checkpoint_mode_cfg == "auto":
+        if "loss" in best_checkpoint_metric.lower():
+            best_checkpoint_mode = "min"
+        elif any(keyword in best_checkpoint_metric.lower() 
+                 for keyword in ["acc", "accuracy", "recall", "precision", "f1", "auc"]):
+            best_checkpoint_mode = "max"
+        else:
+            best_checkpoint_mode = "min"
+            logger.warning(
+                f"Could not auto-detect mode for metric '{best_checkpoint_metric}', defaulting to 'min'"
+            )
+    else:
+        best_checkpoint_mode = str(best_checkpoint_mode_cfg)
+        if best_checkpoint_mode not in ("min", "max"):
+            raise ValueError(
+                f"Invalid best_checkpoint_mode='{best_checkpoint_mode}'. Must be 'auto', 'min', or 'max'."
+            )
+    
+    logger.info(
+        f"Best checkpoint selection: metric={best_checkpoint_metric}, mode={best_checkpoint_mode}"
+    )
+
+    # Early stopping - aligned with best checkpoint metric
     early_stopping = EarlyStopping(
         patience=train_config.get("early_stopping_patience", 15),
         min_delta=0.001,
-        mode="min",
+        mode=best_checkpoint_mode,
+    )
+    logger.info(
+        f"Early stopping: patience={train_config.get('early_stopping_patience', 15)}, "
+        f"monitoring {best_checkpoint_metric} ({best_checkpoint_mode})"
     )
 
     # Resume from checkpoint if specified
     start_epoch = 0
-    best_val_loss = float("inf")
+    best_metric_value = float("inf") if best_checkpoint_mode == "min" else float("-inf")
     has_saved_best = False
     resume_optimizer_state_dict: Optional[Dict[str, Any]] = None
     resume_scheduler_state_dict: Optional[Dict[str, Any]] = None
@@ -1483,22 +1538,29 @@ def train(
                 str(best_checkpoint_path), map_location="cpu", weights_only=False
             )
             best_metrics = best_checkpoint.get("metrics", {})
-            best_val_loss = best_metrics.get("val_loss", float("inf"))
+            best_metric_value = best_metrics.get(
+                best_checkpoint_metric,
+                float("inf") if best_checkpoint_mode == "min" else float("-inf")
+            )
             has_saved_best = True
             logger.info(
-                f"Best validation loss from existing checkpoint: {best_val_loss:.4f}"
+                f"Best {best_checkpoint_metric} from existing checkpoint: {best_metric_value:.4f}"
             )
         else:
             # Use metrics from resumed checkpoint as baseline
-            best_val_loss = prev_metrics.get("val_loss", float("inf"))
+            best_metric_value = prev_metrics.get(
+                best_checkpoint_metric,
+                float("inf") if best_checkpoint_mode == "min" else float("-inf")
+            )
             try:
                 import shutil
 
                 shutil.copy(str(resume_from), str(best_checkpoint_path))
                 has_saved_best = True
                 logger.info(
-                    "No existing best checkpoint found - seeded from resume checkpoint (val_loss=%.4f)",
-                    best_val_loss,
+                    "No existing best checkpoint found - seeded from resume checkpoint (%s=%.4f)",
+                    best_checkpoint_metric,
+                    best_metric_value,
                 )
             except Exception as exc:
                 has_saved_best = False
@@ -1529,7 +1591,7 @@ def train(
         freeze_backbone: bool,
         enable_early_stopping: bool,
     ) -> bool:
-        nonlocal best_val_loss, has_saved_best
+        nonlocal best_metric_value, has_saved_best
         for epoch in range(stage_start_epoch, stage_start_epoch + stage_epochs):
             epoch_start = time.time()
 
@@ -1594,10 +1656,26 @@ def train(
             history["val_acc"].append(val_metrics["accuracy"])
             history["lr"].append(current_lr)
 
-            is_best = val_metrics["loss"] < best_val_loss
-            if is_best:
-                best_val_loss = val_metrics["loss"]
-                has_saved_best = True
+            # Check if this is the best checkpoint based on configured metric
+            current_metric_value = val_metrics.get(best_checkpoint_metric)
+            if current_metric_value is None:
+                logger.warning(
+                    f"Configured metric '{best_checkpoint_metric}' not found in validation metrics. "
+                    f"Available metrics: {list(val_metrics.keys())}"
+                )
+                is_best = False
+            else:
+                if best_checkpoint_mode == "min":
+                    is_best = current_metric_value < best_metric_value
+                else:  # max
+                    is_best = current_metric_value > best_metric_value
+                
+                if is_best:
+                    best_metric_value = current_metric_value
+                    has_saved_best = True
+                    logger.info(
+                        f"New best {best_checkpoint_metric}: {best_metric_value:.4f}"
+                    )
 
             save_checkpoint(
                 model=model,
@@ -1609,6 +1687,10 @@ def train(
                     "train_acc": train_metrics["accuracy"],
                     "val_loss": val_metrics["loss"],
                     "val_acc": val_metrics["accuracy"],
+                    "macro_precision": val_metrics.get("macro_precision", 0.0),
+                    "macro_recall": val_metrics.get("macro_recall", 0.0),
+                    "macro_f1": val_metrics.get("macro_f1", 0.0),
+                    "macro_recall_f1_mean": val_metrics.get("macro_recall_f1_mean", 0.0),
                 },
                 config=config,
                 output_dir=output_dir,
@@ -1619,9 +1701,21 @@ def train(
                 metadata_encoder_state=metadata_encoder_state,
             )
 
-            if enable_early_stopping and early_stopping(val_metrics["loss"]):
-                logger.info(f"Early stopping triggered at epoch {epoch + 1}")
-                return True
+            if enable_early_stopping:
+                early_stop_metric_value = val_metrics.get(best_checkpoint_metric)
+                if early_stop_metric_value is None:
+                    logger.warning(
+                        f"Early stopping metric '{best_checkpoint_metric}' not found in validation metrics, "
+                        f"using 'loss' as fallback"
+                    )
+                    early_stop_metric_value = val_metrics["loss"]
+                
+                if early_stopping(early_stop_metric_value):
+                    logger.info(
+                        f"Early stopping triggered at epoch {epoch + 1} "
+                        f"({best_checkpoint_metric}={early_stop_metric_value:.4f})"
+                    )
+                    return True
         return False
 
     stopped = False
@@ -1737,7 +1831,7 @@ def train(
 
     total_time = time.time() - start_time
     logger.info(f"\nTraining completed in {total_time / 60:.1f} minutes")
-    logger.info(f"Best validation loss: {best_val_loss:.4f}")
+    logger.info(f"Best {best_checkpoint_metric}: {best_metric_value:.4f}")
     logger.info(f"Model saved to: {output_dir}")
 
 
