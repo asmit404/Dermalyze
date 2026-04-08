@@ -393,13 +393,11 @@ This document explains all supported parameters in `config.yaml`, including vali
 
 - **Type:** float
 - **Default:** `0.0`
-- **Description:** Probability to enter mix augmentation branch.
-
-### `training.cutmix_prob`
-
-- **Type:** float
-- **Default:** `0.15`
-- **Description:** Conditional probability of CutMix vs Mixup when mix branch is used.
+- **Range:** `0.0` to `1.0`
+- **Description:** Probability of applying MixUp/CutMix augmentation to a batch.
+  - When both `mixup_alpha` and `cutmix_alpha` are > 0, automatically uses 50/50 random selection between them
+  - When only one alpha is > 0, always uses that augmentation type
+  - Examples: `0.5` = augment 50% of batches, `0.0` = disabled
 
 ### Scheduler
 

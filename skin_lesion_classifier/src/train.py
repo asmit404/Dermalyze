@@ -70,16 +70,34 @@ def mixup_data(
     images: torch.Tensor,
     targets: torch.Tensor,
     alpha: float,
-) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, float]:
-    """Apply mixup to a batch."""
+    metadata: Optional[torch.Tensor] = None,
+) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, float, Optional[torch.Tensor]]:
+    """
+    Apply mixup to a batch, optionally mixing metadata vectors as well.
+    
+    Args:
+        images: Image tensor (B, C, H, W)
+        targets: Target labels (B,)
+        alpha: Mixup alpha parameter
+        metadata: Optional metadata tensor (B, M) to mix with same lambda
+        
+    Returns:
+        Tuple of (mixed_images, targets_a, targets_b, lam, mixed_metadata)
+    """
     if alpha <= 0:
-        return images, targets, targets, 1.0
+        return images, targets, targets, 1.0, metadata
     lam = np.random.beta(alpha, alpha)
     index = torch.randperm(images.size(0), device=images.device)
     mixed_images = lam * images + (1.0 - lam) * images[index]
     targets_a = targets
     targets_b = targets[index]
-    return mixed_images, targets_a, targets_b, lam
+    
+    # Mix metadata if provided using same lambda
+    mixed_metadata = None
+    if metadata is not None:
+        mixed_metadata = lam * metadata + (1.0 - lam) * metadata[index]
+    
+    return mixed_images, targets_a, targets_b, lam, mixed_metadata
 
 
 def _rand_bbox(size: torch.Size, lam: float) -> Tuple[int, int, int, int]:
@@ -103,10 +121,25 @@ def cutmix_data(
     images: torch.Tensor,
     targets: torch.Tensor,
     alpha: float,
-) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, float]:
-    """Apply cutmix to a batch."""
+    metadata: Optional[torch.Tensor] = None,
+) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, float, Optional[torch.Tensor]]:
+    """
+    Apply cutmix to a batch, optionally mixing metadata vectors as well.
+    
+    CutMix pastes a rectangular region from one image onto another. For metadata,
+    we use the same lambda (area ratio) to linearly interpolate metadata vectors.
+    
+    Args:
+        images: Image tensor (B, C, H, W)
+        targets: Target labels (B,)
+        alpha: CutMix alpha parameter
+        metadata: Optional metadata tensor (B, M) to mix with same lambda
+        
+    Returns:
+        Tuple of (mixed_images, targets_a, targets_b, lam, mixed_metadata)
+    """
     if alpha <= 0:
-        return images, targets, targets, 1.0
+        return images, targets, targets, 1.0, metadata
     lam = np.random.beta(alpha, alpha)
     index = torch.randperm(images.size(0), device=images.device)
 
@@ -121,7 +154,13 @@ def cutmix_data(
     lam = 1.0 - area / (images.size(2) * images.size(3))
     targets_a = targets
     targets_b = targets[index]
-    return mixed_images, targets_a, targets_b, lam
+    
+    # Mix metadata if provided using same lambda
+    mixed_metadata = None
+    if metadata is not None:
+        mixed_metadata = lam * metadata + (1.0 - lam) * metadata[index]
+    
+    return mixed_images, targets_a, targets_b, lam, mixed_metadata
 
 
 def load_config(config_path: Path | str) -> Dict[str, Any]:
@@ -522,7 +561,6 @@ def train_one_epoch(
     mixup_alpha: float = 0.0,
     cutmix_alpha: float = 0.0,
     mixup_prob: float = 0.0,
-    cutmix_prob: float = 0.5,
     gradient_accumulation_steps: int = 1,
 ) -> Dict[str, float]:
     """
@@ -569,20 +607,17 @@ def train_one_epoch(
             metadata = metadata.to(device, non_blocking=True)
 
         use_mix = False
-        if (
-            metadata is None
-            and (mixup_alpha > 0 or cutmix_alpha > 0)
-            and np.random.rand() < mixup_prob
-        ):
+        if (mixup_alpha > 0 or cutmix_alpha > 0) and np.random.rand() < mixup_prob:
+            # When both enabled, use 50/50 random choice; otherwise use whichever is enabled
             if cutmix_alpha > 0 and (
-                mixup_alpha <= 0 or np.random.rand() < cutmix_prob
+                mixup_alpha <= 0 or np.random.rand() < 0.5
             ):
-                images, targets_a, targets_b, lam = cutmix_data(
-                    images, targets, cutmix_alpha
+                images, targets_a, targets_b, lam, metadata = cutmix_data(
+                    images, targets, cutmix_alpha, metadata
                 )
             else:
-                images, targets_a, targets_b, lam = mixup_data(
-                    images, targets, mixup_alpha
+                images, targets_a, targets_b, lam, metadata = mixup_data(
+                    images, targets, mixup_alpha, metadata
                 )
             use_mix = True
         else:
@@ -1059,8 +1094,7 @@ def train(
     mixup_alpha = float(train_config.get("mixup_alpha", 0.0) or 0.0)
     cutmix_alpha = float(train_config.get("cutmix_alpha", 0.0) or 0.0)
     mixup_prob = float(train_config.get("mixup_prob", 0.0) or 0.0)
-    cutmix_prob_cfg = train_config.get("cutmix_prob", 0.5)
-    cutmix_prob = float(0.5 if cutmix_prob_cfg is None else cutmix_prob_cfg)
+    # cutmix_prob removed - now uses 50/50 split when both alphas > 0
     sampling_weight_power_cfg = train_config.get("sampling_weight_power", 1.0)
     weighted_sampling_power = float(
         1.0 if sampling_weight_power_cfg is None else sampling_weight_power_cfg
@@ -1099,9 +1133,9 @@ def train(
     if gradient_accumulation_steps > 1:
         logger.info(f"Using gradient accumulation: {gradient_accumulation_steps} steps")
     if use_metadata and (mixup_alpha > 0 or cutmix_alpha > 0):
-        logger.warning("MixUp/CutMix disabled because metadata fusion is enabled.")
-        mixup_alpha = 0.0
-        cutmix_alpha = 0.0
+        logger.info(
+            "MixUp/CutMix enabled with metadata fusion - metadata vectors will be mixed using same lambda."
+        )
 
     # Optional two-stage fine-tuning (head warmup -> full fine-tune)
     stage1_epochs = int(train_config.get("stage1_epochs", 0) or 0)
@@ -1567,7 +1601,6 @@ def train(
                 mixup_alpha=mixup_alpha,
                 cutmix_alpha=cutmix_alpha,
                 mixup_prob=mixup_prob,
-                cutmix_prob=cutmix_prob,
                 gradient_accumulation_steps=gradient_accumulation_steps,
             )
 

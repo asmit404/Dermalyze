@@ -85,10 +85,9 @@ training:
   gradient_accumulation_steps: 2
 
   # Data Augmentation
-  mixup_alpha: 0.0
-  cutmix_alpha: 0.0
-  mixup_prob: 0.0
-  cutmix_prob: 0.0
+  mixup_alpha: 0.2
+  cutmix_alpha: 0.2
+  mixup_prob: 0.5
 
   # Learning Rate Scheduler
   scheduler:
