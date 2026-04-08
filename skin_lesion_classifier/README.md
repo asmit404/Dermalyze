@@ -289,7 +289,7 @@ python scripts/benchmark.py --config config.yaml --num-batches 20
 
 - `data.use_metadata: true` enables multi-input fusion with metadata encoder.
 - Required metadata roles are inferred from configured columns (age, sex, localization/anatom site).
-- If metadata is enabled, MixUp/CutMix are automatically disabled at runtime.
+- MixUp/CutMix are supported with metadata; metadata features are mixed using the same lambda as images.
 - Class balancing is typically controlled via weighted sampling. Current default uses:
   - `training.use_weighted_sampling: true`
   - `loss.class_weight_power: 0.0`

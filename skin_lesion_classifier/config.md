@@ -80,7 +80,7 @@ This document explains all supported parameters in `config.yaml`, including vali
 - **Requirements:**
   - CSV must have columns: `age_approx`, `sex`, `anatom_site`
   - Run data preparation with metadata: `python src/prepare_data.py --data-dir data/HAM10000_Training --include-metadata`
-  - Automatically disables MixUp/CutMix (metadata cannot be interpolated)
+  - MixUp/CutMix are supported with metadata; metadata vectors are interpolated using the same lambda when enabled
 - **Architecture:**
   - When `true`: `MultiInputClassifier` (image backbone + metadata encoder + fusion layer)
   - When `false`: Standard image-only model
@@ -308,7 +308,7 @@ This document explains all supported parameters in `config.yaml`, including vali
 - **Type:** string
 - **Default:** `fit_total`
 - **Valid options:**
-  - `fit_total`: total epochs fixed by `training.epochs`; `stage2_epochs` can be ignored if inconsistent.
+  - `fit_total`: total epochs fixed by `training.epochs`; if `stage2_epochs` is provided, it must satisfy `stage1_epochs + stage2_epochs == epochs` (otherwise training raises an error).
   - `explicit`: total epochs = `stage1_epochs + stage2_epochs`.
 
 ### `training.stage1_lr`, `training.stage2_lr`
@@ -439,7 +439,7 @@ This document explains all supported parameters in `config.yaml`, including vali
 ### `training.ema.save_best`
 
 - **Type:** bool
-- **Default:** `false`  
+- **Default:** `true`  
 - **Description:** When true, saves EMA weights to `checkpoint_best.pt` (if EMA is enabled).
 - **Notes:** If `training.ema.enabled: false`, this flag has no effect.
 
@@ -448,8 +448,8 @@ This document explains all supported parameters in `config.yaml`, including vali
 ### `training.best_checkpoint_metric`
 
 - **Type:** string
-- **Default:** `val_loss`
-- **Available options:** `val_loss`, `macro_recall`, `macro_f1`, `macro_precision`, `macro_recall_f1_mean`, `weighted_recall`, `weighted_f1`, `accuracy`
+- **Default:** `macro_recall_f1_mean`
+- **Available options:** `macro_recall_f1_mean`, `macro_recall`, `macro_f1`, `macro_precision`, `weighted_recall`, `weighted_f1`, `accuracy`, `loss` (aliases: `val_loss`, `val_acc`, `acc`)
 - **Description:** Metric used to determine the best model checkpoint during training. For imbalanced datasets like HAM10000, macro-averaged metrics treat all classes equally, preventing the model from being biased toward majority classes.
 - **Recommendation:** Use `macro_recall_f1_mean` for medical imaging tasks where minority class performance is critical (e.g., melanoma detection).
 - **Notes:** 
@@ -669,12 +669,12 @@ The following optimizations were applied to improve model accuracy and training 
 **Rationale:** Improves adaptation during full fine-tuning; previous value was too conservative and could slow convergence
 **Impact:** Faster stage 2 convergence, +0.5-1% accuracy improvement
 
-### 2. MixUp/CutMix Explicitly Disabled
+### 2. MixUp/CutMix Configuration Update (Historical)
 
 **Parameters:** `training.mixup_alpha`, `training.cutmix_alpha`, `training.mixup_prob`
 **Change:** `0.1, 0.1, 0.25` → `0.0, 0.0, 0.0`
-**Rationale:** Incompatible with `data.use_metadata: true` (metadata features cannot be meaningfully interpolated between samples); makes auto-disable behavior explicit in config
-**Impact:** Clearer configuration, no functional change (already auto-disabled when metadata enabled)
+**Historical rationale (March 2024):** At that time MixUp/CutMix were not metadata-aware.
+**Current status:** Superseded. Training now supports metadata-aware MixUp/CutMix, so these can be enabled with `data.use_metadata: true`.
 
 ### 3. EMA Best-Checkpoint Behavior Adjusted
 
@@ -697,6 +697,6 @@ The following optimizations were applied to improve model accuracy and training 
 **Rationale:** Arithmetic mean is safer and more stable for probability aggregation across diverse augmentations
 **Impact:** More stable TTA predictions, especially with full augmentation mode
 
-**Key Takeaway:** Use a **single class-imbalance control mechanism** (weighted sampling) rather than combining multiple approaches. When `use_metadata: true`, MixUp/CutMix must remain disabled.
+**Key Takeaway:** Use a **single class-imbalance control mechanism** (weighted sampling) rather than combining multiple approaches. MixUp/CutMix can be used with metadata in current training code.
 
 ---
