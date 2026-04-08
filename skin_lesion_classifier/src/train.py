@@ -1385,7 +1385,7 @@ def train(
     scaler = GradScaler("cuda") if use_grad_scaler else None
 
     # Best checkpoint metric configuration
-    best_checkpoint_metric = str(train_config.get("best_checkpoint_metric", "val_loss"))
+    best_checkpoint_metric = str(train_config.get("best_checkpoint_metric", "macro_recall_f1_mean"))
     best_checkpoint_mode_cfg = train_config.get("best_checkpoint_mode", "auto")
     
     # Auto-detect mode based on metric name

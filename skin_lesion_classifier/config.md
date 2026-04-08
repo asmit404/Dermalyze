@@ -441,6 +441,30 @@ This document explains all supported parameters in `config.yaml`, including vali
 - **Type:** bool
 - **Default:** `false`  
 
+### Best Checkpoint Selection
+
+### `training.best_checkpoint_metric`
+
+- **Type:** string
+- **Default:** `val_loss`
+- **Available options:** `val_loss`, `macro_recall`, `macro_f1`, `macro_precision`, `macro_recall_f1_mean`, `weighted_recall`, `weighted_f1`, `accuracy`
+- **Description:** Metric used to determine the best model checkpoint during training. For imbalanced datasets like HAM10000, macro-averaged metrics treat all classes equally, preventing the model from being biased toward majority classes.
+- **Recommendation:** Use `macro_recall_f1_mean` for medical imaging tasks where minority class performance is critical (e.g., melanoma detection).
+- **Notes:** 
+  - The checkpoint with the best value of this metric is saved as `checkpoint_best.pt`
+  - Early stopping also monitors this same metric
+  - `macro_recall_f1_mean` = average of macro_recall and macro_f1
+
+### `training.best_checkpoint_mode`
+
+- **Type:** string
+- **Default:** `auto`
+- **Valid options:** `auto`, `min`, `max`
+- **Description:** Whether to minimize or maximize the metric.
+  - `auto`: Automatically detects based on metric name (loss → min, accuracy/recall/f1/precision → max)
+  - `min`: Select checkpoint with lowest metric value
+  - `max`: Select checkpoint with highest metric value
+
 ### Early stopping
 
 ### `training.early_stopping_patience`

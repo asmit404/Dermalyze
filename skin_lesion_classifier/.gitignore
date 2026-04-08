@@ -7,6 +7,7 @@ data/HAM10000_Segmentations
 data/HAM10000_Test
 data/HAM10000_Val
 data/braff-bald
+data/balanced_19k
 
 # Training outputs and checkpoints
 evaluation_results/

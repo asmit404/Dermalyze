@@ -53,6 +53,8 @@ training:
   epochs: 45
   lr: 0.000688152438667204
   weight_decay: 0.022225433823808757
+  best_checkpoint_metric: macro_recall_f1_mean
+  best_checkpoint_mode: auto
 
   # Two-Stage Training
   stage1_epochs: 2
