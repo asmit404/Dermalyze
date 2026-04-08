@@ -1397,14 +1397,19 @@ def train(
     # Create loss function
     loss_type = str(loss_config.get("type", "focal")).strip().lower()
 
-    # Handle alpha parameter - use manual values if provided, otherwise use computed class weights
+    # loss.alpha is focal-only; non-focal losses use class_weights from class_weight_power
+    manual_alpha_cfg = loss_config.get("alpha")
+    manual_alpha: Optional[torch.Tensor] = None
+    if manual_alpha_cfg is not None:
+        manual_alpha = torch.tensor(manual_alpha_cfg, dtype=torch.float32, device=device)
+
     focal_alpha: Optional[torch.Tensor] = None
-    if "alpha" in loss_config and loss_config["alpha"] is not None:
-        focal_alpha = torch.tensor(loss_config["alpha"], dtype=torch.float32)
-        logger.info(f"Using manual alpha weights: {focal_alpha.tolist()}")
-    else:
-        focal_alpha = class_weights
-        if loss_type == "focal":
+    if loss_type == "focal":
+        if manual_alpha is not None:
+            focal_alpha = manual_alpha
+            logger.info("Using manual focal alpha weights: %s", focal_alpha.tolist())
+        else:
+            focal_alpha = class_weights
             if class_weight_power > 0.5:
                 logger.warning(
                     "Focal loss is using class-weight alpha with class_weight_power=%.3f. "
@@ -1417,11 +1422,19 @@ def train(
                     "(class_weight_power=%.3f). This can over-correct class imbalance.",
                     class_weight_power,
                 )
-        logger.info(f"Using computed class weights: {focal_alpha.tolist()}")
+            logger.info(
+                "Using computed class weights as focal alpha: %s",
+                focal_alpha.tolist(),
+            )
+    elif manual_alpha is not None:
+        logger.warning(
+            "loss.alpha is only used when loss.type='focal'; ignoring alpha for loss.type='%s'.",
+            loss_type,
+        )
 
     criterion = get_loss_function(
         loss_type=loss_type,
-        class_weights=focal_alpha if loss_type != "focal" else None,
+        class_weights=class_weights if loss_type != "focal" else None,
         label_smoothing=loss_config.get("label_smoothing", 0.1),
         focal_gamma=loss_config.get("gamma", loss_config.get("focal_gamma", 2.0)),
         focal_alpha=focal_alpha if loss_type == "focal" else None,
