@@ -3,8 +3,7 @@ import Button from './ui/Button';
 import { useDataCache } from '../lib/dataCache';
 import { getPredictionBreakdown } from '../lib/analyticsUtils';
 import { supabase } from '../lib/supabase';
-import type { AnalysisHistoryItem, DashStats } from '../lib/types';
-import { SHORT_CLASS_NAMES } from '../lib/types';
+import type { AnalysisHistoryItem } from '../lib/types';
 
 interface DashboardScreenProps {
   onNavigateToUpload: () => void;
@@ -23,20 +22,12 @@ const RISK_LABEL: Record<string, { label: string; cls: string }> = {
   vasc: { label: 'Low', cls: 'text-emerald-600 bg-emerald-50 border-emerald-200' },
 };
 
-interface RpcResult {
-  total: number;
-  this_month: number;
-  avg_confidence: number | null;
-  needs_review: number;
-  class_counts: { id: string; name: string; count: number }[] | null;
-}
-
 const DashboardScreen: React.FC<DashboardScreenProps> = ({
   onNavigateToUpload,
   onNavigateToHistory,
   onNavigateToTrends,
 }) => {
-  const { dashboardStats, fetchDashboardStats, userName, userId } = useDataCache();
+  const { dashboardStats, fetchDashboardStats, userName } = useDataCache();
   const { data: stats, loading, error: fetchErr } = dashboardStats;
   const [timePeriod, setTimePeriod] = useState<'weekly' | 'monthly'>('weekly');
 

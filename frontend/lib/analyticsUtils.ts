@@ -1,10 +1,10 @@
 import type { AnalysisHistoryItem } from './types';
 import {
   CLASS_DEFINITIONS,
-  CLASS_COLORS,
   CLASSES_BY_RISK,
   RISK_COLORS,
   HIGH_RISK_CLASS_IDS,
+  isValidClassId,
   type RiskLevel,
 } from './classDefinitions';
 
@@ -95,7 +95,9 @@ export function getRiskDistribution(items: AnalysisHistoryItem[]): RiskDistribut
 
   (Object.keys(riskConfig) as RiskLevel[]).forEach((level) => {
     const classIds = CLASSES_BY_RISK[level];
-    const count = items.filter((item) => classIds.includes(item.classId as never)).length;
+    const count = items.filter(
+      (item) => isValidClassId(item.classId) && classIds.includes(item.classId)
+    ).length;
     if (count > 0) {
       distribution.push({
         level: riskConfig[level].label,
@@ -152,8 +154,8 @@ export function getSummaryStats(items: AnalysisHistoryItem[]) {
 
   const avgConfidence = items.reduce((sum, item) => sum + item.confidence, 0) / items.length;
 
-  const highRiskCount = items.filter((item) =>
-    HIGH_RISK_CLASS_IDS.includes(item.classId as never)
+  const highRiskCount = items.filter(
+    (item) => isValidClassId(item.classId) && HIGH_RISK_CLASS_IDS.includes(item.classId)
   ).length;
 
   // Find most recent analysis using raw timestamps
@@ -267,17 +269,17 @@ export function getDiagnosisBreakdown(items: AnalysisHistoryItem[]): DiagnosisDa
   // Build diagnosis data with clinical info from single source of truth
   const diagnoses: DiagnosisData[] = [];
   countMap.forEach((count, id) => {
-    const classDef = CLASS_DEFINITIONS[id as keyof typeof CLASS_DEFINITIONS];
-    if (classDef) {
-      diagnoses.push({
-        id,
-        name: classDef.name,
-        count,
-        percentage: Math.round((count / items.length) * 1000) / 10,
-        color: classDef.color,
-        riskLevel: classDef.riskLevel,
-      });
-    }
+    if (!isValidClassId(id)) return;
+
+    const classDef = CLASS_DEFINITIONS[id];
+    diagnoses.push({
+      id,
+      name: classDef.name,
+      count,
+      percentage: Math.round((count / items.length) * 1000) / 10,
+      color: classDef.color,
+      riskLevel: classDef.riskLevel,
+    });
   });
 
   // Sort by risk level (critical first), then by count

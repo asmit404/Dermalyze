@@ -284,5 +284,5 @@ export function getConfidenceColor(confidence: number): string {
  * Validate if a string is a known class ID.
  */
 export function isValidClassId(classId: string): classId is ClassId {
-  return classId in CLASS_DEFINITIONS;
+  return Object.prototype.hasOwnProperty.call(CLASS_DEFINITIONS, classId);
 }

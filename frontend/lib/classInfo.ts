@@ -7,7 +7,6 @@
 
 import {
   CLASS_DEFINITIONS,
-  type ClassDefinition,
   type RiskLevel,
   type RiskStyle,
   getRiskBadgeStyles as _getRiskBadgeStyles,
