@@ -29,14 +29,14 @@ const HistoryDetailScreen: React.FC<HistoryDetailScreenProps> = ({ item, onBack 
   const [loading, setLoading] = useState(true);
 
   // Note state
-  const [noteText,    setNoteText]    = useState(item?.notes ?? '');
-  const [editing,     setEditing]     = useState(false);
-  const [editText,    setEditText]    = useState('');
-  const [savingNote,  setSavingNote]  = useState(false);
-  const [noteSaved,   setNoteSaved]   = useState(false);
-  const [noteError,   setNoteError]   = useState<string | null>(null);
+  const [noteText, setNoteText] = useState(item?.notes ?? '');
+  const [editing, setEditing] = useState(false);
+  const [editText, setEditText] = useState('');
+  const [savingNote, setSavingNote] = useState(false);
+  const [noteSaved, setNoteSaved] = useState(false);
+  const [noteError, setNoteError] = useState<string | null>(null);
   const [clinicianName, setClinicianName] = useState<string>('');
-  const [exportingPdf,  setExportingPdf]  = useState(false);
+  const [exportingPdf, setExportingPdf] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
@@ -56,9 +56,12 @@ const HistoryDetailScreen: React.FC<HistoryDetailScreenProps> = ({ item, onBack 
   // Fetch clinician name for PDF report
   useEffect(() => {
     const fetchClinicianName = async () => {
-      const { data: { user } } = await supabase.auth.getUser();
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
       if (user) {
-        const name = user.user_metadata?.full_name || user.user_metadata?.name || user.email || 'Unknown';
+        const name =
+          user.user_metadata?.full_name || user.user_metadata?.name || user.email || 'Unknown';
         setClinicianName(name);
       }
     };
@@ -84,7 +87,9 @@ const HistoryDetailScreen: React.FC<HistoryDetailScreenProps> = ({ item, onBack 
     setSavingNote(true);
     setNoteError(null);
     try {
-      const { data: { user } } = await supabase.auth.getUser();
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
       if (!user) throw new Error('Not authenticated');
       const trimmed = editText.trim() || null;
       const { data: updated, error } = await supabase
@@ -105,14 +110,21 @@ const HistoryDetailScreen: React.FC<HistoryDetailScreenProps> = ({ item, onBack 
       setTimeout(() => setNoteSaved(false), 3000);
     } catch (err: unknown) {
       // Differentiate between database errors and other errors
-      const errorMessage = err instanceof Error && err.message === 'Not authenticated'
-        ? 'Authentication expired. Please log in again.'
-        : 'Could not save note. Please check your connection and try again.';
+      const errorMessage =
+        err instanceof Error && err.message === 'Not authenticated'
+          ? 'Authentication expired. Please log in again.'
+          : 'Could not save note. Please check your connection and try again.';
       setNoteError(errorMessage);
     } finally {
       setSavingNote(false);
     }
   };
+
+  // Only use real scores from the DB — never fabricate a distribution.
+  const classes = item.allScores ?? null;
+
+  const info = classInfoMap[item.classId];
+  const caseId = `DRM-${item.id.slice(0, 8).toUpperCase()}`;
 
   const exportPdf = async () => {
     if (!item || !info) return;
@@ -135,12 +147,6 @@ const HistoryDetailScreen: React.FC<HistoryDetailScreenProps> = ({ item, onBack 
       setExportingPdf(false);
     }
   };
-
-  // Only use real scores from the DB — never fabricate a distribution.
-  const classes = item.allScores ?? null;
-
-  const info = classInfoMap[item.classId];
-  const caseId = `DRM-${item.id.slice(0, 8).toUpperCase()}`;
 
   /* Skeleton loading state (Doherty Threshold) */
   if (loading) {
@@ -166,34 +172,59 @@ const HistoryDetailScreen: React.FC<HistoryDetailScreenProps> = ({ item, onBack 
       <main className="max-w-6xl mx-auto w-full px-4 sm:px-6 py-8 flex flex-col gap-6">
         {/* Case metadata bar */}
         <div className="flex flex-wrap items-center gap-x-6 gap-y-2 text-xs">
-          <h1 className="text-sm font-semibold text-slate-500 uppercase tracking-widest">Analysis Record</h1>
+          <h1 className="text-sm font-semibold text-slate-500 uppercase tracking-widest">
+            Analysis Record
+          </h1>
           <div className="flex items-center gap-1.5">
             <span className="font-bold text-slate-400 uppercase tracking-widest">Case ID:</span>
             <span className="font-semibold text-slate-700 tabular-nums">{caseId}</span>
           </div>
           <div className="flex items-center gap-1.5">
             <span className="font-bold text-slate-400 uppercase tracking-widest">Date:</span>
-            <span className="font-semibold text-slate-700">{item.date} &middot; {item.time}</span>
+            <span className="font-semibold text-slate-700">
+              {item.date} &middot; {item.time}
+            </span>
           </div>
         </div>
 
         {/* PRIMARY RESULT CARD — includes analyzed image */}
-        <ResultCard
-          classId={item.classId}
-          className={item.className}
-          confidence={item.confidence}
-          info={info}
-          imageUrl={item.imageUrl}
-          gradcamImage={item.gradcamUrl ?? null}
-        />
+        {info ? (
+          <ResultCard
+            classId={item.classId}
+            className={item.className}
+            confidence={item.confidence}
+            info={info}
+            imageUrl={item.imageUrl}
+            gradcamImage={item.gradcamUrl ?? null}
+          />
+        ) : (
+          <section className="bg-white rounded-xl border border-slate-200 shadow-sm p-5">
+            <div className="flex flex-col gap-3">
+              <div className="flex items-center gap-3">
+                <span className="text-2xl font-bold text-teal-700 uppercase">{item.classId}</span>
+                <span className="text-sm font-medium text-slate-400 bg-slate-100 px-2 py-1 rounded">
+                  {item.confidence.toFixed(1)}% confidence
+                </span>
+              </div>
+              <p className="text-base text-slate-700">{item.className}</p>
+              <p className="text-sm text-slate-500">
+                Classification information is not available for this lesion type.
+              </p>
+            </div>
+          </section>
+        )}
 
         {/* PROBABILITY CHART — only render when real scores are available */}
         {classes ? (
           <ProbabilityChart classes={classes} predictedClassId={item.classId} />
         ) : (
           <section className="bg-white rounded-xl border border-slate-200 shadow-sm p-5">
-            <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-1">Probability Breakdown</p>
-            <p className="text-sm text-slate-500">Full probability breakdown is not available for this record.</p>
+            <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-1">
+              Probability Breakdown
+            </p>
+            <p className="text-sm text-slate-500">
+              Full probability breakdown is not available for this record.
+            </p>
           </section>
         )}
 
@@ -211,14 +242,21 @@ const HistoryDetailScreen: React.FC<HistoryDetailScreenProps> = ({ item, onBack 
         {/* NOTES SECTION */}
         <section className="bg-white rounded-xl border border-slate-200 shadow-sm p-5">
           <div className="flex items-center justify-between mb-3">
-            <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">Clinician Notes</p>
+            <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">
+              Clinician Notes
+            </p>
             {!editing && (
               <button
                 onClick={startEditing}
                 className="text-xs font-semibold text-teal-600 hover:text-teal-700 flex items-center gap-1 px-2 py-1 rounded-lg hover:bg-teal-50 transition-colors"
               >
                 <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536M9 13l6.586-6.586a2 2 0 012.828 2.828L11.828 15.828a2 2 0 01-1.414.586H9v-2.414a2 2 0 01.586-1.414z" />
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M15.232 5.232l3.536 3.536M9 13l6.586-6.586a2 2 0 012.828 2.828L11.828 15.828a2 2 0 01-1.414.586H9v-2.414a2 2 0 01.586-1.414z"
+                  />
                 </svg>
                 {noteText ? 'Edit' : 'Add note'}
               </button>
@@ -236,9 +274,7 @@ const HistoryDetailScreen: React.FC<HistoryDetailScreenProps> = ({ item, onBack 
                 placeholder="Add clinical observations, follow-up plans, or patient notes…"
                 className="w-full text-sm text-slate-700 border border-slate-200 rounded-lg p-3 resize-none focus:outline-none focus:ring-2 focus:ring-teal-400 focus:border-transparent placeholder:text-slate-300"
               />
-              {noteError && (
-                <p className="text-xs text-red-500 font-medium">{noteError}</p>
-              )}
+              {noteError && <p className="text-xs text-red-500 font-medium">{noteError}</p>}
               <div className="flex items-center justify-between gap-3">
                 <span className="text-xs text-slate-300">{editText.length}/2000</span>
                 <div className="flex gap-2">
@@ -257,22 +293,35 @@ const HistoryDetailScreen: React.FC<HistoryDetailScreenProps> = ({ item, onBack 
                     {savingNote ? (
                       <>
                         <svg className="animate-spin h-3.5 w-3.5" viewBox="0 0 24 24" fill="none">
-                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                          <circle
+                            className="opacity-25"
+                            cx="12"
+                            cy="12"
+                            r="10"
+                            stroke="currentColor"
+                            strokeWidth="4"
+                          />
+                          <path
+                            className="opacity-75"
+                            fill="currentColor"
+                            d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
+                          />
                         </svg>
                         Saving…
                       </>
-                    ) : 'Save'}
+                    ) : (
+                      'Save'
+                    )}
                   </button>
                 </div>
               </div>
             </div>
           ) : noteText ? (
             <div className="flex flex-col gap-1.5">
-              <p className="text-sm text-slate-700 whitespace-pre-wrap leading-relaxed">{noteText}</p>
-              {noteSaved && (
-                <p className="text-xs text-teal-600 font-medium">Note saved.</p>
-              )}
+              <p className="text-sm text-slate-700 whitespace-pre-wrap leading-relaxed">
+                {noteText}
+              </p>
+              {noteSaved && <p className="text-xs text-teal-600 font-medium">Note saved.</p>}
             </div>
           ) : (
             <p className="text-sm text-slate-400 italic">No notes for this record.</p>
@@ -283,22 +332,38 @@ const HistoryDetailScreen: React.FC<HistoryDetailScreenProps> = ({ item, onBack 
         <div className="flex flex-col gap-3">
           <button
             onClick={exportPdf}
-            disabled={exportingPdf}
+            disabled={exportingPdf || !info}
             className="w-full py-2.5 px-4 rounded-full font-medium text-sm border-2 border-teal-600 text-teal-700 bg-teal-50 transition-all duration-200 hover:bg-teal-100 hover:border-teal-700 active:bg-teal-200 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-teal-400 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             <span className="flex items-center justify-center gap-2">
               {exportingPdf ? (
                 <>
                   <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24" fill="none">
-                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                    <circle
+                      className="opacity-25"
+                      cx="12"
+                      cy="12"
+                      r="10"
+                      stroke="currentColor"
+                      strokeWidth="4"
+                    />
+                    <path
+                      className="opacity-75"
+                      fill="currentColor"
+                      d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
+                    />
                   </svg>
                   Generating Report…
                 </>
               ) : (
                 <>
                   <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
+                    />
                   </svg>
                   Download PDF Report
                 </>
@@ -311,7 +376,12 @@ const HistoryDetailScreen: React.FC<HistoryDetailScreenProps> = ({ item, onBack 
           >
             <span className="flex items-center justify-center gap-2">
               <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 19l-7-7m0 0l7-7m-7 7h18" />
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M10 19l-7-7m0 0l7-7m-7 7h18"
+                />
               </svg>
               Back to History
             </span>

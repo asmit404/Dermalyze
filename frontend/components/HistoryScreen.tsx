@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useRef } from 'react';
 import Button from './ui/Button';
 import { supabase } from '../lib/supabase';
@@ -58,7 +57,12 @@ interface FilterState {
 }
 
 const HistoryScreen: React.FC<HistoryScreenProps> = ({ onBack, onViewDetails }) => {
-  const { historyCache, fetchHistoryCache, userId: cachedUserId, invalidateDashboard } = useDataCache();
+  const {
+    historyCache,
+    fetchHistoryCache,
+    userId: cachedUserId,
+    invalidateDashboard,
+  } = useDataCache();
   const [historyItems, setHistoryItems] = useState<AnalysisHistoryItem[]>([]);
   const [loadingHistory, setLoadingHistory] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
@@ -77,15 +81,15 @@ const HistoryScreen: React.FC<HistoryScreenProps> = ({ onBack, onViewDetails }) 
   // Filter state - auto-apply (no pending state needed)
   const [filters, setFilters] = useState<FilterState>({
     timePeriod: 'all',
-    lesionTypes: new Set(),
-    riskLevels: new Set(),
+    lesionTypes: new Set<string>(),
+    riskLevels: new Set<keyof typeof RISK_LEVELS>(),
     needsReview: false,
     searchText: '',
     sortBy: 'created_at_desc',
   });
   const [showTypeDropdown, setShowTypeDropdown] = useState(false);
   const [showRiskDropdown, setShowRiskDropdown] = useState(false);
-  const searchDebounceRef = useRef<NodeJS.Timeout>();
+  const searchDebounceRef = useRef<NodeJS.Timeout | undefined>(undefined);
 
   const modalRef = useRef<HTMLDivElement>(null);
   const cancelBtnRef = useRef<HTMLButtonElement>(null);
@@ -98,7 +102,9 @@ const HistoryScreen: React.FC<HistoryScreenProps> = ({ onBack, onViewDetails }) 
     const targetUserId = uid ?? userId ?? '';
     let query = supabase
       .from('analyses')
-      .select('id, created_at, predicted_class_id, predicted_class_name, confidence, image_url, gradcam_image_url, all_scores, notes')
+      .select(
+        'id, created_at, predicted_class_id, predicted_class_name, confidence, image_url, gradcam_image_url, all_scores, notes'
+      )
       .eq('user_id', targetUserId);
 
     // Time period filter
@@ -135,9 +141,7 @@ const HistoryScreen: React.FC<HistoryScreenProps> = ({ onBack, onViewDetails }) 
       if (lesionTypesFromRisk.length > 0) {
         // If both lesion types AND risk levels are selected, intersect them
         if (filters.lesionTypes.size > 0) {
-          const intersection = lesionTypesFromRisk.filter((type) =>
-            filters.lesionTypes.has(type)
-          );
+          const intersection = lesionTypesFromRisk.filter((type) => filters.lesionTypes.has(type));
           if (intersection.length === 0) {
             // No overlap - return empty result
             query = query.in('predicted_class_id', ['__NONE__']);
@@ -152,12 +156,10 @@ const HistoryScreen: React.FC<HistoryScreenProps> = ({ onBack, onViewDetails }) 
 
     // Needs review filter (critical/high risk types: MEL, BCC, AKIEC)
     if (filters.needsReview) {
-      const needsReviewTypes = ['mel', 'bcc', 'akiec'];
+      const needsReviewTypes = ['mel', 'bcc', 'akiec'] as const;
       // If lesion types are already filtered, intersect with needs review types
       if (filters.lesionTypes.size > 0) {
-        const intersection = needsReviewTypes.filter((type) =>
-          filters.lesionTypes.has(type)
-        );
+        const intersection = needsReviewTypes.filter((type) => filters.lesionTypes.has(type));
         if (intersection.length === 0) {
           query = query.in('predicted_class_id', ['__NONE__']);
         } else {
@@ -168,9 +170,7 @@ const HistoryScreen: React.FC<HistoryScreenProps> = ({ onBack, onViewDetails }) 
         const lesionTypesFromRisk = Array.from(filters.riskLevels).flatMap(
           (level) => RISK_LEVELS[level]
         );
-        const intersection = needsReviewTypes.filter((type) =>
-          lesionTypesFromRisk.includes(type)
-        );
+        const intersection = needsReviewTypes.filter((type) => lesionTypesFromRisk.includes(type));
         if (intersection.length === 0) {
           query = query.in('predicted_class_id', ['__NONE__']);
         } else {
@@ -202,7 +202,10 @@ const HistoryScreen: React.FC<HistoryScreenProps> = ({ onBack, onViewDetails }) 
     return query;
   };
 
-  const mapRows = async (data: Record<string, unknown>[], userId: string): Promise<AnalysisHistoryItem[]> => {
+  const mapRows = async (
+    data: Record<string, unknown>[],
+    userId: string
+  ): Promise<AnalysisHistoryItem[]> => {
     // Collect all image paths (both original and gradcam)
     const imagePaths = data
       .map((row) => row.image_url as string | null)
@@ -224,14 +227,15 @@ const HistoryScreen: React.FC<HistoryScreenProps> = ({ onBack, onViewDetails }) 
         // Fetch and decrypt encrypted images (or use signed URLs for old unencrypted images)
         await Promise.all(
           signed.map(async (entry) => {
-            if (!entry.signedUrl) return;
+            const { path, signedUrl } = entry;
+            if (!path || !signedUrl) return;
             try {
               // Check if the file is encrypted (has .enc extension)
-              const isEncrypted = entry.path.endsWith('.enc');
+              const isEncrypted = path.endsWith('.enc');
 
               if (isEncrypted) {
                 // New encrypted images: fetch and decrypt
-                const response = await fetch(entry.signedUrl);
+                const response = await fetch(signedUrl);
                 if (!response.ok) return;
                 const encryptedBlob = await response.blob();
 
@@ -240,13 +244,13 @@ const HistoryScreen: React.FC<HistoryScreenProps> = ({ onBack, onViewDetails }) 
 
                 // Convert to data URL for display
                 const dataUrl = await blobToDataUrl(decryptedBlob);
-                imageUrlMap[entry.path] = dataUrl;
+                imageUrlMap[path] = dataUrl;
               } else {
                 // Old unencrypted images: use signed URL directly
-                imageUrlMap[entry.path] = entry.signedUrl;
+                imageUrlMap[path] = signedUrl;
               }
             } catch (err) {
-              console.error(`Failed to process image ${entry.path}:`, err);
+              console.error(`Failed to process image ${path}:`, err);
               // Silently skip - image won't display but won't break the UI
             }
           })
@@ -258,25 +262,32 @@ const HistoryScreen: React.FC<HistoryScreenProps> = ({ onBack, onViewDetails }) 
       const rawUrl = row.image_url as string | null;
       const rawGradcamUrl = row.gradcam_image_url as string | null;
 
-      const imageUrl = rawUrl && !rawUrl.startsWith('http') ? imageUrlMap[rawUrl] : rawUrl;
-      const gradcamUrl = rawGradcamUrl && !rawGradcamUrl.startsWith('http') ? imageUrlMap[rawGradcamUrl] : rawGradcamUrl;
+      const imageUrl =
+        rawUrl && !rawUrl.startsWith('http') ? imageUrlMap[rawUrl] : (rawUrl ?? undefined);
+      const gradcamUrl =
+        rawGradcamUrl && !rawGradcamUrl.startsWith('http')
+          ? imageUrlMap[rawGradcamUrl]
+          : (rawGradcamUrl ?? undefined);
 
       return {
         id: row.id as string,
         createdAt: row.created_at as string,
         date: new Date(row.created_at as string).toLocaleDateString('en-US', {
-          year: 'numeric', month: 'short', day: 'numeric',
+          year: 'numeric',
+          month: 'short',
+          day: 'numeric',
         }),
         time: new Date(row.created_at as string).toLocaleTimeString('en-US', {
-          hour: '2-digit', minute: '2-digit',
+          hour: '2-digit',
+          minute: '2-digit',
         }),
         classId: row.predicted_class_id as string,
         className: row.predicted_class_name as string,
         confidence: row.confidence as number,
         imageUrl,
-        imagePath: (rawUrl && !rawUrl.startsWith('http')) ? rawUrl : undefined,
+        imagePath: rawUrl && !rawUrl.startsWith('http') ? rawUrl : undefined,
         gradcamUrl,
-        gradcamPath: (rawGradcamUrl && !rawGradcamUrl.startsWith('http')) ? rawGradcamUrl : undefined,
+        gradcamPath: rawGradcamUrl && !rawGradcamUrl.startsWith('http') ? rawGradcamUrl : undefined,
         allScores: (row.all_scores as AnalysisHistoryItem['allScores']) ?? undefined,
         notes: (row.notes as string | null) ?? undefined,
       };
@@ -312,17 +323,19 @@ const HistoryScreen: React.FC<HistoryScreenProps> = ({ onBack, onViewDetails }) 
 
         // Otherwise, fetch from cache (which will fetch from Supabase if needed)
         if (hasNoFilters) {
-          await fetchHistoryCache();
-          if (historyCache.data) {
-            setHistoryItems(historyCache.data);
-            setHasMore(historyCache.data.length === PAGE_SIZE);
+          const cachedData = await fetchHistoryCache();
+          if (cachedData) {
+            setHistoryItems(cachedData);
+            setHasMore(cachedData.length === PAGE_SIZE);
             setLoadingHistory(false);
             return;
           }
         }
 
         // If we have filters or cache failed, fetch directly
-        const { data: { user } } = await supabase.auth.getUser();
+        const {
+          data: { user },
+        } = await supabase.auth.getUser();
         const fetchUid = user?.id ?? null;
         if (fetchUid && !uid) setUserId(fetchUid);
 
@@ -397,22 +410,23 @@ const HistoryScreen: React.FC<HistoryScreenProps> = ({ onBack, onViewDetails }) 
 
   // ── Selection helpers ──────────────────────────────────────────────────────
   const toggleSelectMode = () => {
-    setSelectMode(prev => !prev);
+    setSelectMode((prev) => !prev);
     setSelected(new Set());
   };
 
   const toggleSelect = (id: string) => {
-    setSelected(prev => {
+    setSelected((prev) => {
       const next = new Set(prev);
-      if (next.has(id)) next.delete(id); else next.add(id);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
       return next;
     });
   };
 
-  const allSelected = historyItems.length > 0 && historyItems.every(i => selected.has(i.id));
+  const allSelected = historyItems.length > 0 && historyItems.every((i) => selected.has(i.id));
 
   const toggleSelectAll = () => {
-    setSelected(allSelected ? new Set() : new Set(historyItems.map(i => i.id)));
+    setSelected(allSelected ? new Set() : new Set(historyItems.map((i) => i.id)));
   };
 
   // ── Delete handlers ────────────────────────────────────────────────────────
@@ -422,12 +436,18 @@ const HistoryScreen: React.FC<HistoryScreenProps> = ({ onBack, onViewDetails }) 
     const ids = [...selected];
 
     try {
-      const paths = ids
-        .map(id => historyItems.find(i => i.id === id)?.imagePath)
-        .filter((p): p is string => !!p);
+      const paths = ids.flatMap((id) => {
+        const item = historyItems.find((i) => i.id === id);
+        const itemPaths: string[] = [];
+        if (item?.imagePath) itemPaths.push(item.imagePath);
+        if (item?.gradcamPath) itemPaths.push(item.gradcamPath);
+        return itemPaths;
+      });
 
       if (paths.length > 0) {
-        const { error: storageError } = await supabase.storage.from('analysis-images').remove(paths);
+        const { error: storageError } = await supabase.storage
+          .from('analysis-images')
+          .remove(paths);
         if (storageError) {
           throw new Error(`Failed to remove images: ${storageError.message}`);
         }
@@ -438,7 +458,7 @@ const HistoryScreen: React.FC<HistoryScreenProps> = ({ onBack, onViewDetails }) 
         throw new Error(`Failed to delete records: ${dbError.message}`);
       }
 
-      setHistoryItems(prev => prev.filter(i => !ids.includes(i.id)));
+      setHistoryItems((prev) => prev.filter((i) => !ids.includes(i.id)));
       setSelected(new Set());
       setSelectMode(false);
       setConfirmModal(null);
@@ -446,7 +466,7 @@ const HistoryScreen: React.FC<HistoryScreenProps> = ({ onBack, onViewDetails }) 
       invalidateDashboard();
     } catch (err) {
       setHistoryError(
-        err instanceof Error ? err.message : 'Could not delete selected records. Please try again.',
+        err instanceof Error ? err.message : 'Could not delete selected records. Please try again.'
       );
     } finally {
       setDeleting(false);
@@ -458,23 +478,33 @@ const HistoryScreen: React.FC<HistoryScreenProps> = ({ onBack, onViewDetails }) 
     setHistoryError(null);
 
     try {
-      const { data: { user }, error: userError } = await supabase.auth.getUser();
+      const {
+        data: { user },
+        error: userError,
+      } = await supabase.auth.getUser();
       if (userError || !user) throw new Error('Not authenticated');
 
       const { data: allRows, error: fetchError } = await supabase
         .from('analyses')
-        .select('image_url')
+        .select('image_url, gradcam_image_url')
         .eq('user_id', user.id)
-        .not('image_url', 'is', null);
+        .or('image_url.not.is.null,gradcam_image_url.not.is.null');
       if (fetchError) {
         throw new Error(`Failed to fetch records: ${fetchError.message}`);
       }
 
-      const paths = (allRows ?? [])
-        .map(r => r.image_url as string)
-        .filter(p => !p.startsWith('http'));
+      const paths = (allRows ?? []).flatMap((r) => {
+        const rowPaths: string[] = [];
+        const imageUrl = r.image_url as string | null;
+        const gradcamUrl = r.gradcam_image_url as string | null;
+        if (imageUrl && !imageUrl.startsWith('http')) rowPaths.push(imageUrl);
+        if (gradcamUrl && !gradcamUrl.startsWith('http')) rowPaths.push(gradcamUrl);
+        return rowPaths;
+      });
       if (paths.length > 0) {
-        const { error: storageError } = await supabase.storage.from('analysis-images').remove(paths);
+        const { error: storageError } = await supabase.storage
+          .from('analysis-images')
+          .remove(paths);
         if (storageError) {
           throw new Error(`Failed to remove images: ${storageError.message}`);
         }
@@ -494,7 +524,7 @@ const HistoryScreen: React.FC<HistoryScreenProps> = ({ onBack, onViewDetails }) 
       invalidateDashboard();
     } catch (err) {
       setHistoryError(
-        err instanceof Error ? err.message : 'Could not clear history. Please try again.',
+        err instanceof Error ? err.message : 'Could not clear history. Please try again.'
       );
     } finally {
       setDeleting(false);
@@ -531,8 +561,8 @@ const HistoryScreen: React.FC<HistoryScreenProps> = ({ onBack, onViewDetails }) 
   const clearFilters = () => {
     setFilters({
       timePeriod: 'all',
-      lesionTypes: new Set(),
-      riskLevels: new Set(),
+      lesionTypes: new Set<string>(),
+      riskLevels: new Set<keyof typeof RISK_LEVELS>(),
       needsReview: false,
       searchText: '',
       sortBy: 'created_at_desc',
@@ -587,7 +617,7 @@ const HistoryScreen: React.FC<HistoryScreenProps> = ({ onBack, onViewDetails }) 
       }
       if (e.key === 'Tab' && modalRef.current) {
         const focusable = modalRef.current.querySelectorAll<HTMLElement>(
-          'button:not([disabled]), [href], input, select, textarea, [tabindex]:not([tabindex="-1"])',
+          'button:not([disabled]), [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
         );
         if (focusable.length === 0) return;
         const first = focusable[0];
@@ -609,7 +639,6 @@ const HistoryScreen: React.FC<HistoryScreenProps> = ({ onBack, onViewDetails }) 
   return (
     <div className="flex-1 flex flex-col bg-slate-50 text-slate-900 pb-12">
       <main className="max-w-4xl mx-auto w-full px-4 sm:px-6 py-8 flex flex-col gap-8">
-
         {/* Header */}
         <div className="flex items-center justify-between gap-3">
           <div className="flex items-center gap-3">
@@ -618,7 +647,12 @@ const HistoryScreen: React.FC<HistoryScreenProps> = ({ onBack, onViewDetails }) 
               className="p-2 hover:bg-slate-100 rounded-full transition-colors text-slate-400 hover:text-slate-600"
             >
               <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M15 19l-7-7 7-7"
+                />
               </svg>
             </button>
             <h1 className="text-2xl font-bold text-slate-900 tracking-tight">Past Analyses</h1>
@@ -671,7 +705,12 @@ const HistoryScreen: React.FC<HistoryScreenProps> = ({ onBack, onViewDetails }) 
                     stroke="currentColor"
                     viewBox="0 0 24 24"
                   >
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"
+                    />
                   </svg>
                 </div>
 
@@ -701,7 +740,7 @@ const HistoryScreen: React.FC<HistoryScreenProps> = ({ onBack, onViewDetails }) 
                       'px-3 py-2 text-sm font-medium border rounded-lg transition-colors flex items-center gap-2',
                       filters.lesionTypes.size > 0
                         ? 'border-teal-300 bg-teal-50 text-teal-700 hover:bg-teal-100'
-                        : 'border-slate-300 bg-white text-slate-600 hover:border-slate-400'
+                        : 'border-slate-300 bg-white text-slate-600 hover:border-slate-400',
                     ].join(' ')}
                   >
                     Type
@@ -711,7 +750,12 @@ const HistoryScreen: React.FC<HistoryScreenProps> = ({ onBack, onViewDetails }) 
                       </span>
                     )}
                     <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={2}
+                        d="M19 9l-7 7-7-7"
+                      />
                     </svg>
                   </button>
 
@@ -729,7 +773,9 @@ const HistoryScreen: React.FC<HistoryScreenProps> = ({ onBack, onViewDetails }) 
                             className="w-4 h-4 rounded border-slate-300 text-teal-600 accent-teal-600 cursor-pointer"
                           />
                           <span className="text-sm text-slate-700 flex-1">{type.name}</span>
-                          <span className="text-xs text-slate-400 uppercase font-mono">{type.id}</span>
+                          <span className="text-xs text-slate-400 uppercase font-mono">
+                            {type.id}
+                          </span>
                         </label>
                       ))}
                     </div>
@@ -744,7 +790,7 @@ const HistoryScreen: React.FC<HistoryScreenProps> = ({ onBack, onViewDetails }) 
                       'px-3 py-2 text-sm font-medium border rounded-lg transition-colors flex items-center gap-2',
                       filters.riskLevels.size > 0
                         ? 'border-teal-300 bg-teal-50 text-teal-700 hover:bg-teal-100'
-                        : 'border-slate-300 bg-white text-slate-600 hover:border-slate-300'
+                        : 'border-slate-300 bg-white text-slate-600 hover:border-slate-300',
                     ].join(' ')}
                   >
                     Risk Level
@@ -754,34 +800,46 @@ const HistoryScreen: React.FC<HistoryScreenProps> = ({ onBack, onViewDetails }) 
                       </span>
                     )}
                     <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={2}
+                        d="M19 9l-7 7-7-7"
+                      />
                     </svg>
                   </button>
 
                   {showRiskDropdown && (
                     <div className="absolute z-50 mt-2 w-56 bg-white border border-slate-200 rounded-lg shadow-xl py-2">
-                      {(Object.keys(RISK_LEVELS) as Array<keyof typeof RISK_LEVELS>).map((level) => (
-                        <label
-                          key={level}
-                          className="flex items-center gap-2 px-3 py-2 hover:bg-slate-50 cursor-pointer"
-                        >
-                          <input
-                            type="checkbox"
-                            checked={filters.riskLevels.has(level)}
-                            onChange={() => toggleRiskLevel(level)}
-                            className="w-4 h-4 rounded border-slate-300 text-teal-600 accent-teal-600 cursor-pointer"
-                          />
-                          <span className={[
-                            'text-sm font-medium capitalize',
-                            level === 'critical' ? 'text-red-600' :
-                              level === 'high' ? 'text-orange-600' :
-                                level === 'moderate' ? 'text-amber-600' :
-                                  'text-emerald-600'
-                          ].join(' ')}>
-                            {level}
-                          </span>
-                        </label>
-                      ))}
+                      {(Object.keys(RISK_LEVELS) as Array<keyof typeof RISK_LEVELS>).map(
+                        (level) => (
+                          <label
+                            key={level}
+                            className="flex items-center gap-2 px-3 py-2 hover:bg-slate-50 cursor-pointer"
+                          >
+                            <input
+                              type="checkbox"
+                              checked={filters.riskLevels.has(level)}
+                              onChange={() => toggleRiskLevel(level)}
+                              className="w-4 h-4 rounded border-slate-300 text-teal-600 accent-teal-600 cursor-pointer"
+                            />
+                            <span
+                              className={[
+                                'text-sm font-medium capitalize',
+                                level === 'critical'
+                                  ? 'text-red-600'
+                                  : level === 'high'
+                                    ? 'text-orange-600'
+                                    : level === 'moderate'
+                                      ? 'text-amber-600'
+                                      : 'text-emerald-600',
+                              ].join(' ')}
+                            >
+                              {level}
+                            </span>
+                          </label>
+                        )
+                      )}
                     </div>
                   )}
                 </div>
@@ -793,11 +851,16 @@ const HistoryScreen: React.FC<HistoryScreenProps> = ({ onBack, onViewDetails }) 
                     'px-3 py-2 text-sm font-medium border rounded-lg transition-colors flex items-center gap-2',
                     filters.needsReview
                       ? 'border-amber-300 bg-amber-50 text-amber-700 hover:bg-amber-100'
-                      : 'border-slate-300 bg-white text-slate-600 hover:border-slate-300'
+                      : 'border-slate-300 bg-white text-slate-600 hover:border-slate-300',
                   ].join(' ')}
                 >
                   <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
+                    />
                   </svg>
                   Needs Review
                 </button>
@@ -835,8 +898,19 @@ const HistoryScreen: React.FC<HistoryScreenProps> = ({ onBack, onViewDetails }) 
           {loadingHistory ? (
             <div className="flex items-center justify-center py-16">
               <svg className="animate-spin h-6 w-6 text-teal-600" viewBox="0 0 24 24" fill="none">
-                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                <circle
+                  className="opacity-25"
+                  cx="12"
+                  cy="12"
+                  r="10"
+                  stroke="currentColor"
+                  strokeWidth="4"
+                />
+                <path
+                  className="opacity-75"
+                  fill="currentColor"
+                  d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
+                />
               </svg>
             </div>
           ) : historyError ? (
@@ -847,10 +921,22 @@ const HistoryScreen: React.FC<HistoryScreenProps> = ({ onBack, onViewDetails }) 
             <div className="py-16 px-6 text-center">
               {hasActiveFilters ? (
                 <>
-                  <svg className="w-12 h-12 text-slate-300 mx-auto mb-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                  <svg
+                    className="w-12 h-12 text-slate-300 mx-auto mb-3"
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={1.5}
+                      d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"
+                    />
                   </svg>
-                  <p className="text-sm font-medium text-slate-600 mb-1">No analyses match your filters</p>
+                  <p className="text-sm font-medium text-slate-600 mb-1">
+                    No analyses match your filters
+                  </p>
                   <button
                     onClick={clearFilters}
                     className="text-xs font-semibold text-teal-600 hover:text-teal-700 mt-2 transition-colors"
@@ -861,209 +947,309 @@ const HistoryScreen: React.FC<HistoryScreenProps> = ({ onBack, onViewDetails }) 
               ) : (
                 <>
                   <p className="text-sm text-slate-400">No analyses found.</p>
-                  <p className="text-xs text-slate-300 mt-1">Run your first classification to see it here.</p>
+                  <p className="text-xs text-slate-300 mt-1">
+                    Run your first classification to see it here.
+                  </p>
                 </>
               )}
             </div>
-          ) : (<>
-
-            {/* Selection toolbar */}
-            {selectMode && (
-              <div className="flex items-center justify-between px-4 sm:px-6 py-3 border-b border-slate-200 bg-slate-50">
-                <label className="flex items-center gap-2.5 cursor-pointer select-none">
-                  <input
-                    type="checkbox"
-                    checked={allSelected}
-                    onChange={toggleSelectAll}
-                    className="w-4 h-4 rounded border-slate-300 text-teal-600 accent-teal-600 cursor-pointer"
-                  />
-                  <span className="text-xs font-semibold text-slate-600">
-                    {allSelected ? 'Deselect all' : 'Select all'}
-                  </span>
-                </label>
-                <button
-                  disabled={selected.size === 0}
-                  onClick={() => setConfirmModal('selected')}
-                  className="text-xs font-bold px-3 py-1.5 rounded-lg bg-red-500 text-white hover:bg-red-600 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-                >
-                  Delete {selected.size > 0 ? `${selected.size} selected` : 'selected'}
-                </button>
-              </div>
-            )}
-
-            {/* Mobile card layout (< md) */}
-            <ul className="divide-y divide-slate-100 md:hidden">
-              {historyItems.map((item) => (
-                <li
-                  key={item.id}
-                  className={[
-                    'flex items-center gap-4 px-4 py-4 transition-all',
-                    selectMode && selected.has(item.id) ? 'bg-red-50/60' : ''
-                  ].join(' ')}
-                >
-                  {selectMode && (
+          ) : (
+            <>
+              {/* Selection toolbar */}
+              {selectMode && (
+                <div className="flex items-center justify-between px-4 sm:px-6 py-3 border-b border-slate-200 bg-slate-50">
+                  <label className="flex items-center gap-2.5 cursor-pointer select-none">
                     <input
                       type="checkbox"
-                      checked={selected.has(item.id)}
-                      onChange={() => toggleSelect(item.id)}
-                      aria-label={`Select case DRM-${item.id.slice(0, 8).toUpperCase()}`}
-                      className="w-4 h-4 rounded border-slate-300 accent-teal-600 cursor-pointer shrink-0"
+                      checked={allSelected}
+                      onChange={toggleSelectAll}
+                      className="w-4 h-4 rounded border-slate-300 text-teal-600 accent-teal-600 cursor-pointer"
                     />
-                  )}
-                  <div className="w-12 h-12 rounded-lg bg-slate-100 flex items-center justify-center text-slate-300 border border-slate-200 overflow-hidden shrink-0">
-                    {item.imageUrl ? (
-                      <img src={item.imageUrl} alt="Lesion thumbnail" className="w-full h-full object-cover" />
-                    ) : (
-                      <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
-                      </svg>
+                    <span className="text-xs font-semibold text-slate-600">
+                      {allSelected ? 'Deselect all' : 'Select all'}
+                    </span>
+                  </label>
+                  <button
+                    disabled={selected.size === 0}
+                    onClick={() => setConfirmModal('selected')}
+                    className="text-xs font-bold px-3 py-1.5 rounded-lg bg-red-500 text-white hover:bg-red-600 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                  >
+                    Delete {selected.size > 0 ? `${selected.size} selected` : 'selected'}
+                  </button>
+                </div>
+              )}
+
+              {/* Mobile card layout (< md) */}
+              <ul className="divide-y divide-slate-100 md:hidden">
+                {historyItems.map((item) => (
+                  <li
+                    key={item.id}
+                    className={[
+                      'flex items-center gap-4 px-4 py-4 transition-all',
+                      selectMode && selected.has(item.id) ? 'bg-red-50/60' : '',
+                    ].join(' ')}
+                  >
+                    {selectMode && (
+                      <input
+                        type="checkbox"
+                        checked={selected.has(item.id)}
+                        onChange={() => toggleSelect(item.id)}
+                        aria-label={`Select case DRM-${item.id.slice(0, 8).toUpperCase()}`}
+                        className="w-4 h-4 rounded border-slate-300 accent-teal-600 cursor-pointer shrink-0"
+                      />
                     )}
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 mb-0.5">
-                      <span className="text-sm font-bold text-teal-700 uppercase">{item.classId}</span>
-                      <span className="text-[10px] font-bold text-slate-400 bg-slate-100 px-1.5 py-0.5 rounded tracking-tighter">{item.confidence.toFixed(1)}%</span>
-                    </div>
-                    <p className="text-xs text-slate-500 truncate">{item.className}</p>
-                    <p className="text-xs text-slate-400 mt-0.5">{item.date} · {item.time}</p>
-                  </div>
-                  {!selectMode && (
-                    <button
-                      onClick={() => onViewDetails(item)}
-                      className="shrink-0 text-teal-600 hover:text-teal-700 p-2 rounded-full hover:bg-teal-50 transition-colors"
-                      title="View Details"
-                    >
-                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-                      </svg>
-                    </button>
-                  )}
-                </li>
-              ))}
-            </ul>
-
-            {/* Desktop table layout (md+) */}
-            <div className="hidden md:block overflow-x-auto">
-              <table className="w-full text-left border-collapse">
-                <thead>
-                  <tr className="bg-slate-50 border-b border-slate-200">
-                    {selectMode && <th className="pl-6 py-4 w-10" />}
-                    <th className="px-6 py-4 text-xs font-bold text-slate-400 uppercase tracking-widest">Lesion Context</th>
-                    <th className="px-6 py-4 text-xs font-bold text-slate-400 uppercase tracking-widest">Date / Time</th>
-                    <th className="px-6 py-4 text-xs font-bold text-slate-400 uppercase tracking-widest">Predicted Class</th>
-                    <th className="px-6 py-4 text-xs font-bold text-slate-400 uppercase tracking-widest text-right">Details</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100">
-                  {historyItems.map((item) => (
-                    <tr
-                      key={item.id}
-                      className={[
-                        'hover:bg-slate-50/50 transition-all group',
-                        selectMode && selected.has(item.id) ? 'bg-red-50/60' : ''
-                      ].join(' ')}
-                    >
-                      {selectMode && (
-                        <td className="pl-6 py-4 w-10">
-                          <input
-                            type="checkbox"
-                            checked={selected.has(item.id)}
-                            onChange={() => toggleSelect(item.id)}
-                            aria-label={`Select case DRM-${item.id.slice(0, 8).toUpperCase()}`}
-                            className="w-4 h-4 rounded border-slate-300 accent-teal-600 cursor-pointer"
+                    <div className="w-12 h-12 rounded-lg bg-slate-100 flex items-center justify-center text-slate-300 border border-slate-200 overflow-hidden shrink-0">
+                      {item.imageUrl ? (
+                        <img
+                          src={item.imageUrl}
+                          alt="Lesion thumbnail"
+                          className="w-full h-full object-cover"
+                        />
+                      ) : (
+                        <svg
+                          className="w-6 h-6"
+                          fill="none"
+                          stroke="currentColor"
+                          viewBox="0 0 24 24"
+                        >
+                          <path
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            strokeWidth={1}
+                            d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"
                           />
-                        </td>
+                        </svg>
                       )}
-                      <td className="px-6 py-4">
-                        <div className="flex items-center gap-4">
-                          <div className="w-12 h-12 rounded-lg bg-slate-100 flex items-center justify-center text-slate-300 border border-slate-200 overflow-hidden relative">
-                            {item.imageUrl ? (
-                              <img src={item.imageUrl} alt="Lesion thumbnail" className="w-full h-full object-cover" />
-                            ) : (
-                              <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
-                              </svg>
-                            )}
-                          </div>
-                          <div>
-                            <div className="text-xs font-bold text-slate-400 uppercase tracking-tighter">Case Reference</div>
-                            <div className="text-sm font-semibold text-slate-700 font-mono">DRM-{item.id.slice(0, 8).toUpperCase()}</div>
-                          </div>
-                        </div>
-                      </td>
-                      <td className="px-6 py-4">
-                        <div className="flex flex-col">
-                          <span className="text-sm font-medium text-slate-700">{item.date}</span>
-                          <span className="text-xs text-slate-400">{item.time}</span>
-                        </div>
-                      </td>
-                      <td className="px-6 py-4">
-                        <div className="flex flex-col">
-                          <div className="flex items-center gap-2">
-                            <span className="text-sm font-bold text-teal-700 uppercase">{item.classId}</span>
-                            <span className="text-[10px] font-bold text-slate-400 bg-slate-100 px-1.5 py-0.5 rounded tracking-tighter">{item.confidence.toFixed(1)}%</span>
-                          </div>
-                          <span className="text-xs text-slate-500">{item.className}</span>
-                        </div>
-                      </td>
-                      <td className="px-6 py-4 text-right">
-                        {!selectMode && (
-                          <button
-                            onClick={() => onViewDetails(item)}
-                            className="text-teal-600 hover:text-teal-700 text-sm font-bold uppercase tracking-widest flex items-center gap-1 justify-end ml-auto group-hover:translate-x-1 transition-transform"
-                          >
-                            View Details
-                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-                            </svg>
-                          </button>
-                        )}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 mb-0.5">
+                        <span className="text-sm font-bold text-teal-700 uppercase">
+                          {item.classId}
+                        </span>
+                        <span className="text-[10px] font-bold text-slate-400 bg-slate-100 px-1.5 py-0.5 rounded tracking-tighter">
+                          {item.confidence.toFixed(1)}%
+                        </span>
+                      </div>
+                      <p className="text-xs text-slate-500 truncate">{item.className}</p>
+                      <p className="text-xs text-slate-400 mt-0.5">
+                        {item.date} · {item.time}
+                      </p>
+                    </div>
+                    {!selectMode && (
+                      <button
+                        onClick={() => onViewDetails(item)}
+                        className="shrink-0 text-teal-600 hover:text-teal-700 p-2 rounded-full hover:bg-teal-50 transition-colors"
+                        title="View Details"
+                      >
+                        <svg
+                          className="w-4 h-4"
+                          fill="none"
+                          stroke="currentColor"
+                          viewBox="0 0 24 24"
+                        >
+                          <path
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            strokeWidth={2}
+                            d="M9 5l7 7-7 7"
+                          />
+                        </svg>
+                      </button>
+                    )}
+                  </li>
+                ))}
+              </ul>
 
-            {/* Load More */}
-            {hasMore && (
-              <div className="px-6 py-5 border-t border-slate-100 flex justify-center">
-                <button
-                  onClick={handleLoadMore}
-                  disabled={loadingMore}
-                  className="flex items-center gap-2 text-sm font-semibold text-teal-600 hover:text-teal-700 disabled:opacity-50 transition-colors"
-                >
-                  {loadingMore ? (
-                    <>
-                      <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24" fill="none">
-                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                      </svg>
-                      Loading…
-                    </>
-                  ) : (
-                    <>
-                      Load more records
-                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                      </svg>
-                    </>
-                  )}
-                </button>
+              {/* Desktop table layout (md+) */}
+              <div className="hidden md:block overflow-x-auto">
+                <table className="w-full text-left border-collapse">
+                  <thead>
+                    <tr className="bg-slate-50 border-b border-slate-200">
+                      {selectMode && <th className="pl-6 py-4 w-10" />}
+                      <th className="px-6 py-4 text-xs font-bold text-slate-400 uppercase tracking-widest">
+                        Lesion Context
+                      </th>
+                      <th className="px-6 py-4 text-xs font-bold text-slate-400 uppercase tracking-widest">
+                        Date / Time
+                      </th>
+                      <th className="px-6 py-4 text-xs font-bold text-slate-400 uppercase tracking-widest">
+                        Predicted Class
+                      </th>
+                      <th className="px-6 py-4 text-xs font-bold text-slate-400 uppercase tracking-widest text-right">
+                        Details
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {historyItems.map((item) => (
+                      <tr
+                        key={item.id}
+                        className={[
+                          'hover:bg-slate-50/50 transition-all group',
+                          selectMode && selected.has(item.id) ? 'bg-red-50/60' : '',
+                        ].join(' ')}
+                      >
+                        {selectMode && (
+                          <td className="pl-6 py-4 w-10">
+                            <input
+                              type="checkbox"
+                              checked={selected.has(item.id)}
+                              onChange={() => toggleSelect(item.id)}
+                              aria-label={`Select case DRM-${item.id.slice(0, 8).toUpperCase()}`}
+                              className="w-4 h-4 rounded border-slate-300 accent-teal-600 cursor-pointer"
+                            />
+                          </td>
+                        )}
+                        <td className="px-6 py-4">
+                          <div className="flex items-center gap-4">
+                            <div className="w-12 h-12 rounded-lg bg-slate-100 flex items-center justify-center text-slate-300 border border-slate-200 overflow-hidden relative">
+                              {item.imageUrl ? (
+                                <img
+                                  src={item.imageUrl}
+                                  alt="Lesion thumbnail"
+                                  className="w-full h-full object-cover"
+                                />
+                              ) : (
+                                <svg
+                                  className="w-6 h-6"
+                                  fill="none"
+                                  stroke="currentColor"
+                                  viewBox="0 0 24 24"
+                                >
+                                  <path
+                                    strokeLinecap="round"
+                                    strokeLinejoin="round"
+                                    strokeWidth={1}
+                                    d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"
+                                  />
+                                </svg>
+                              )}
+                            </div>
+                            <div>
+                              <div className="text-xs font-bold text-slate-400 uppercase tracking-tighter">
+                                Case Reference
+                              </div>
+                              <div className="text-sm font-semibold text-slate-700 font-mono">
+                                DRM-{item.id.slice(0, 8).toUpperCase()}
+                              </div>
+                            </div>
+                          </div>
+                        </td>
+                        <td className="px-6 py-4">
+                          <div className="flex flex-col">
+                            <span className="text-sm font-medium text-slate-700">{item.date}</span>
+                            <span className="text-xs text-slate-400">{item.time}</span>
+                          </div>
+                        </td>
+                        <td className="px-6 py-4">
+                          <div className="flex flex-col">
+                            <div className="flex items-center gap-2">
+                              <span className="text-sm font-bold text-teal-700 uppercase">
+                                {item.classId}
+                              </span>
+                              <span className="text-[10px] font-bold text-slate-400 bg-slate-100 px-1.5 py-0.5 rounded tracking-tighter">
+                                {item.confidence.toFixed(1)}%
+                              </span>
+                            </div>
+                            <span className="text-xs text-slate-500">{item.className}</span>
+                          </div>
+                        </td>
+                        <td className="px-6 py-4 text-right">
+                          {!selectMode && (
+                            <button
+                              onClick={() => onViewDetails(item)}
+                              className="text-teal-600 hover:text-teal-700 text-sm font-bold uppercase tracking-widest flex items-center gap-1 justify-end ml-auto group-hover:translate-x-1 transition-transform"
+                            >
+                              View Details
+                              <svg
+                                className="w-4 h-4"
+                                fill="none"
+                                stroke="currentColor"
+                                viewBox="0 0 24 24"
+                              >
+                                <path
+                                  strokeLinecap="round"
+                                  strokeLinejoin="round"
+                                  strokeWidth={2}
+                                  d="M9 5l7 7-7 7"
+                                />
+                              </svg>
+                            </button>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               </div>
-            )}
-          </>)}
+
+              {/* Load More */}
+              {hasMore && (
+                <div className="px-6 py-5 border-t border-slate-100 flex justify-center">
+                  <button
+                    onClick={handleLoadMore}
+                    disabled={loadingMore}
+                    className="flex items-center gap-2 text-sm font-semibold text-teal-600 hover:text-teal-700 disabled:opacity-50 transition-colors"
+                  >
+                    {loadingMore ? (
+                      <>
+                        <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24" fill="none">
+                          <circle
+                            className="opacity-25"
+                            cx="12"
+                            cy="12"
+                            r="10"
+                            stroke="currentColor"
+                            strokeWidth="4"
+                          />
+                          <path
+                            className="opacity-75"
+                            fill="currentColor"
+                            d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
+                          />
+                        </svg>
+                        Loading…
+                      </>
+                    ) : (
+                      <>
+                        Load more records
+                        <svg
+                          className="w-4 h-4"
+                          fill="none"
+                          stroke="currentColor"
+                          viewBox="0 0 24 24"
+                        >
+                          <path
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            strokeWidth={2}
+                            d="M19 9l-7 7-7-7"
+                          />
+                        </svg>
+                      </>
+                    )}
+                  </button>
+                </div>
+              )}
+            </>
+          )}
         </section>
 
         <div className="p-6 bg-blue-50/30 rounded-2xl border border-blue-100">
           <div className="flex gap-3">
             <div className="text-blue-500">
               <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+                />
               </svg>
             </div>
             <p className="text-xs text-blue-700 font-medium leading-relaxed">
-              Analysis history is fetched from your account, ordered newest first. Records are persisted across devices and sessions.
+              Analysis history is fetched from your account, ordered newest first. Records are
+              persisted across devices and sessions.
             </p>
           </div>
         </div>
@@ -1102,14 +1288,26 @@ const HistoryScreen: React.FC<HistoryScreenProps> = ({ onBack, onViewDetails }) 
           >
             {/* Icon */}
             <div className="flex items-center justify-center w-12 h-12 rounded-full bg-red-50 mx-auto">
-              <svg className="w-6 h-6 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+              <svg
+                className="w-6 h-6 text-red-500"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
+                />
               </svg>
             </div>
             {/* Text */}
             <div className="text-center">
               <h2 id="delete-confirm-title" className="text-base font-bold text-slate-900 mb-1">
-                {confirmModal === 'all' ? 'Clear all history?' : `Delete ${selected.size} record${selected.size !== 1 ? 's' : ''}?`}
+                {confirmModal === 'all'
+                  ? 'Clear all history?'
+                  : `Delete ${selected.size} record${selected.size !== 1 ? 's' : ''}?`}
               </h2>
               <p id="delete-confirm-desc" className="text-sm text-slate-500 leading-relaxed">
                 {confirmModal === 'all'
@@ -1135,12 +1333,25 @@ const HistoryScreen: React.FC<HistoryScreenProps> = ({ onBack, onViewDetails }) 
                 {deleting ? (
                   <>
                     <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24" fill="none">
-                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                      <circle
+                        className="opacity-25"
+                        cx="12"
+                        cy="12"
+                        r="10"
+                        stroke="currentColor"
+                        strokeWidth="4"
+                      />
+                      <path
+                        className="opacity-75"
+                        fill="currentColor"
+                        d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
+                      />
                     </svg>
                     Deleting…
                   </>
-                ) : 'Delete permanently'}
+                ) : (
+                  'Delete permanently'
+                )}
               </button>
             </div>
           </div>
