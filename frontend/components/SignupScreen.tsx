@@ -1,4 +1,3 @@
-
 import React, { useState } from 'react';
 import { ShieldCheckIcon } from '@heroicons/react/24/outline';
 import Input from './ui/Input';
@@ -16,20 +15,28 @@ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
 
 type FieldKey = 'email' | 'password' | 'confirmPassword';
 
-const SignupScreen: React.FC<SignupScreenProps> = ({ onNavigateToLogin, onNavigateToHome, onSignupSuccess }) => {
-  const [name,            setName]            = useState('');
-  const [email,           setEmail]           = useState('');
-  const [password,        setPassword]        = useState('');
+const SignupScreen: React.FC<SignupScreenProps> = ({
+  onNavigateToLogin,
+  onNavigateToHome,
+  onSignupSuccess,
+}) => {
+  const [name, setName] = useState('');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
-  const [serverError,     setServerError]     = useState('');
-  const [loading,         setLoading]         = useState(false);
-  const [success,         setSuccess]         = useState(false);
+  const [serverError, setServerError] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [success, setSuccess] = useState(false);
 
   const [fieldErrors, setFieldErrors] = useState<Record<FieldKey, string>>({
-    email: '', password: '', confirmPassword: '',
+    email: '',
+    password: '',
+    confirmPassword: '',
   });
   const [touched, setTouched] = useState<Record<FieldKey, boolean>>({
-    email: false, password: false, confirmPassword: false,
+    email: false,
+    password: false,
+    confirmPassword: false,
   });
 
   // Returns the error string for a field given its current value
@@ -40,7 +47,8 @@ const SignupScreen: React.FC<SignupScreenProps> = ({ onNavigateToLogin, onNaviga
         if (!EMAIL_RE.test(value.trim())) return 'Please enter a valid email address.';
         return '';
       case 'password':
-        if (value.length > 0 && value.length < 12) return 'Password must be at least 12 characters.';
+        if (value.length > 0 && value.length < 12)
+          return 'Password must be at least 12 characters.';
         return '';
       case 'confirmPassword':
         if (value && value !== currentPassword) return 'Passwords do not match.';
@@ -50,27 +58,31 @@ const SignupScreen: React.FC<SignupScreenProps> = ({ onNavigateToLogin, onNaviga
 
   const handleBlur = (field: FieldKey) => {
     const value = field === 'email' ? email : field === 'password' ? password : confirmPassword;
-    setTouched(prev => ({ ...prev, [field]: true }));
-    setFieldErrors(prev => ({ ...prev, [field]: validate(field, value) }));
+    setTouched((prev) => ({ ...prev, [field]: true }));
+    setFieldErrors((prev) => ({ ...prev, [field]: validate(field, value) }));
   };
 
   const handleEmailChange = (v: string) => {
     setEmail(v);
-    if (touched.email) setFieldErrors(prev => ({ ...prev, email: validate('email', v) }));
+    if (touched.email) setFieldErrors((prev) => ({ ...prev, email: validate('email', v) }));
   };
 
   const handlePasswordChange = (v: string) => {
     setPassword(v);
-    if (touched.password) setFieldErrors(prev => ({ ...prev, password: validate('password', v) }));
+    if (touched.password)
+      setFieldErrors((prev) => ({ ...prev, password: validate('password', v) }));
     // Re-check confirm if it's already been touched
     if (touched.confirmPassword)
-      setFieldErrors(prev => ({ ...prev, confirmPassword: validate('confirmPassword', confirmPassword, v) }));
+      setFieldErrors((prev) => ({
+        ...prev,
+        confirmPassword: validate('confirmPassword', confirmPassword, v),
+      }));
   };
 
   const handleConfirmChange = (v: string) => {
     setConfirmPassword(v);
     if (touched.confirmPassword)
-      setFieldErrors(prev => ({ ...prev, confirmPassword: validate('confirmPassword', v) }));
+      setFieldErrors((prev) => ({ ...prev, confirmPassword: validate('confirmPassword', v) }));
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -78,16 +90,20 @@ const SignupScreen: React.FC<SignupScreenProps> = ({ onNavigateToLogin, onNaviga
     setServerError('');
 
     // Touch all fields so errors become visible
-    const allTouched: Record<FieldKey, boolean> = { email: true, password: true, confirmPassword: true };
+    const allTouched: Record<FieldKey, boolean> = {
+      email: true,
+      password: true,
+      confirmPassword: true,
+    };
     setTouched(allTouched);
 
-    const emailErr   = validate('email',           email);
-    const pwErr      = validate('password',        password);
+    const emailErr = validate('email', email);
+    const pwErr = validate('password', password);
     const confirmErr = validate('confirmPassword', confirmPassword);
 
     // Also enforce that both password fields are non-empty on submit
-    const pwRequired      = !password          ? 'Please enter a password.'         : pwErr;
-    const confirmRequired = !confirmPassword   ? 'Please confirm your password.'    : confirmErr;
+    const pwRequired = !password ? 'Please enter a password.' : pwErr;
+    const confirmRequired = !confirmPassword ? 'Please confirm your password.' : confirmErr;
 
     setFieldErrors({ email: emailErr, password: pwRequired, confirmPassword: confirmRequired });
 
@@ -135,13 +151,20 @@ const SignupScreen: React.FC<SignupScreenProps> = ({ onNavigateToLogin, onNaviga
         {/* Header */}
         <header className="w-full bg-white border-b border-slate-200 shadow-sm">
           <div className="max-w-6xl mx-auto px-6 py-4 flex items-center justify-between">
-            <button onClick={onNavigateToHome} className="flex items-center gap-3 hover:opacity-80 transition-opacity">
+            <button
+              onClick={onNavigateToHome}
+              className="flex items-center gap-3 hover:opacity-80 transition-opacity"
+            >
               <div className="w-11 h-11 bg-teal-600 rounded-xl flex items-center justify-center shadow-sm">
                 <ShieldCheckIcon className="w-6 h-6 text-white" />
               </div>
               <div>
-                <h1 className="text-xl font-bold text-slate-900 tracking-tight leading-tight">Dermalyze</h1>
-                <p className="text-[9px] text-slate-500 uppercase tracking-wider font-semibold leading-tight">Clinical Decision Support</p>
+                <h1 className="text-xl font-bold text-slate-900 tracking-tight leading-tight">
+                  Dermalyze
+                </h1>
+                <p className="text-[9px] text-slate-500 uppercase tracking-wider font-semibold leading-tight">
+                  Clinical Decision Support
+                </p>
               </div>
             </button>
             <div className="flex items-center gap-3">
@@ -167,8 +190,18 @@ const SignupScreen: React.FC<SignupScreenProps> = ({ onNavigateToLogin, onNaviga
             <div className="bg-white rounded-2xl border border-slate-300 shadow-sm p-10">
               <div className="text-center">
                 <div className="inline-flex items-center justify-center w-16 h-16 bg-emerald-50 rounded-2xl mb-6">
-                  <svg className="w-10 h-10 text-emerald-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  <svg
+                    className="w-10 h-10 text-emerald-600"
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"
+                    />
                   </svg>
                 </div>
 
@@ -177,12 +210,15 @@ const SignupScreen: React.FC<SignupScreenProps> = ({ onNavigateToLogin, onNaviga
                 </h2>
 
                 <p className="text-slate-600 mb-6 leading-relaxed">
-                  We've sent a verification email to <strong className="text-slate-900">{email}</strong>. Please check your inbox and click the confirmation link to activate your account.
+                  We've sent a verification email to{' '}
+                  <strong className="text-slate-900">{email}</strong>. Please check your inbox and
+                  click the confirmation link to activate your account.
                 </p>
 
                 <div className="bg-teal-50 border border-teal-200 rounded-xl p-4 mb-8">
                   <p className="text-sm text-teal-800 leading-relaxed">
-                    <strong>Next step:</strong> Verify your email address before signing in. The link expires in 24 hours.
+                    <strong>Next step:</strong> Verify your email address before signing in. The
+                    link expires in 24 hours.
                   </p>
                 </div>
 
@@ -207,8 +243,12 @@ const SignupScreen: React.FC<SignupScreenProps> = ({ onNavigateToLogin, onNaviga
               <ShieldCheckIcon className="w-6 h-6 text-white" />
             </div>
             <div>
-              <h1 className="text-xl font-bold text-slate-900 tracking-tight leading-tight">Dermalyze</h1>
-              <p className="text-[9px] text-slate-500 uppercase tracking-wider font-semibold leading-tight">Clinical Decision Support</p>
+              <h1 className="text-xl font-bold text-slate-900 tracking-tight leading-tight">
+                Dermalyze
+              </h1>
+              <p className="text-[9px] text-slate-500 uppercase tracking-wider font-semibold leading-tight">
+                Clinical Decision Support
+              </p>
             </div>
           </div>
         </div>
@@ -221,15 +261,27 @@ const SignupScreen: React.FC<SignupScreenProps> = ({ onNavigateToLogin, onNaviga
           <div className="bg-white rounded-2xl border border-slate-300 shadow-sm p-10">
             <div className="mb-8">
               <h2 className="text-2xl font-bold text-slate-900 mb-2">Create Account</h2>
-              <p className="text-sm text-slate-600">Set up your dermatology classification workspace</p>
+              <p className="text-sm text-slate-600">
+                Set up your dermatology classification workspace
+              </p>
             </div>
 
             <form onSubmit={handleSubmit} className="space-y-5">
               {serverError && (
                 <div className="p-4 bg-red-50 border border-red-200 text-red-700 text-sm rounded-xl">
                   <div className="flex items-start gap-3">
-                    <svg className="w-5 h-5 shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    <svg
+                      className="w-5 h-5 shrink-0 mt-0.5"
+                      fill="none"
+                      stroke="currentColor"
+                      viewBox="0 0 24 24"
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={2}
+                        d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+                      />
                     </svg>
                     <span>{serverError}</span>
                   </div>
@@ -241,7 +293,7 @@ const SignupScreen: React.FC<SignupScreenProps> = ({ onNavigateToLogin, onNaviga
                 <Input
                   label="Full Name (Optional)"
                   type="text"
-                  placeholder="Dr. Jane Smith"
+                  placeholder="Full name"
                   value={name}
                   onChange={(e) => setName(e.target.value)}
                 />
@@ -249,7 +301,7 @@ const SignupScreen: React.FC<SignupScreenProps> = ({ onNavigateToLogin, onNaviga
                 <Input
                   label="Email Address"
                   type="email"
-                  placeholder="your.email@example.com"
+                  placeholder="Email address"
                   value={email}
                   onChange={(e) => handleEmailChange(e.target.value)}
                   onBlur={() => handleBlur('email')}
@@ -272,7 +324,7 @@ const SignupScreen: React.FC<SignupScreenProps> = ({ onNavigateToLogin, onNaviga
                 <Input
                   label="Confirm Password"
                   type="password"
-                  placeholder="Re-enter your password"
+                  placeholder="Confirm password"
                   value={confirmPassword}
                   onChange={(e) => handleConfirmChange(e.target.value)}
                   onBlur={() => handleBlur('confirmPassword')}
@@ -284,12 +336,25 @@ const SignupScreen: React.FC<SignupScreenProps> = ({ onNavigateToLogin, onNaviga
                 {loading ? (
                   <span className="flex items-center justify-center gap-2">
                     <svg className="animate-spin h-5 w-5" viewBox="0 0 24 24" fill="none">
-                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                      <circle
+                        className="opacity-25"
+                        cx="12"
+                        cy="12"
+                        r="10"
+                        stroke="currentColor"
+                        strokeWidth="4"
+                      />
+                      <path
+                        className="opacity-75"
+                        fill="currentColor"
+                        d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
+                      />
                     </svg>
                     Creating account...
                   </span>
-                ) : 'Create Account'}
+                ) : (
+                  'Create Account'
+                )}
               </Button>
             </form>
 
@@ -309,7 +374,8 @@ const SignupScreen: React.FC<SignupScreenProps> = ({ onNavigateToLogin, onNaviga
 
           {/* Footer Note */}
           <p className="mt-8 text-center text-xs text-slate-400 leading-relaxed px-4">
-            By creating an account, you confirm that you are a qualified medical professional and agree to use this system in accordance with professional guidelines.
+            By creating an account, you confirm that you are a qualified medical professional and
+            agree to use this system in accordance with professional guidelines.
           </p>
         </div>
       </div>

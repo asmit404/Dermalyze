@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect } from 'react';
 import { ShieldCheckIcon } from '@heroicons/react/24/outline';
 import Input from './ui/Input';
@@ -100,9 +99,13 @@ const LoginScreen: React.FC<LoginScreenProps> = ({
           setLockCountdown(Math.ceil(LOCKOUT_MS / 1000));
           setError(`Too many failed attempts. Please wait ${LOCKOUT_MS / 60_000} minutes.`);
         } else if (authError.message.includes('Invalid login credentials')) {
-          setError(`Invalid email or password. ${MAX_ATTEMPTS - next} attempt${MAX_ATTEMPTS - next === 1 ? '' : 's'} remaining.`);
+          setError(
+            `Invalid email or password. ${MAX_ATTEMPTS - next} attempt${MAX_ATTEMPTS - next === 1 ? '' : 's'} remaining.`
+          );
         } else if (authError.message.includes('Email not confirmed')) {
-          setError('Please verify your email before logging in. Check your inbox for a confirmation link.');
+          setError(
+            'Please verify your email before logging in. Check your inbox for a confirmation link.'
+          );
         } else {
           setError(friendlyAuthError(authError.message));
         }
@@ -110,7 +113,9 @@ const LoginScreen: React.FC<LoginScreenProps> = ({
         onLoginSuccess();
       }
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : 'An unexpected error occurred. Please try again.');
+      setError(
+        err instanceof Error ? err.message : 'An unexpected error occurred. Please try again.'
+      );
     } finally {
       setLoading(false);
     }
@@ -121,13 +126,20 @@ const LoginScreen: React.FC<LoginScreenProps> = ({
       {/* Header */}
       <header className="w-full bg-white border-b border-slate-200 shadow-sm">
         <div className="max-w-6xl mx-auto px-6 py-4 flex items-center justify-between">
-          <button onClick={onNavigateToHome} className="flex items-center gap-3 hover:opacity-80 transition-opacity">
+          <button
+            onClick={onNavigateToHome}
+            className="flex items-center gap-3 hover:opacity-80 transition-opacity"
+          >
             <div className="w-11 h-11 bg-teal-600 rounded-xl flex items-center justify-center shadow-sm">
               <ShieldCheckIcon className="w-6 h-6 text-white" />
             </div>
             <div>
-              <h1 className="text-xl font-bold text-slate-900 tracking-tight leading-tight">Dermalyze</h1>
-              <p className="text-[9px] text-slate-500 uppercase tracking-wider font-semibold leading-tight">Clinical Decision Support</p>
+              <h1 className="text-xl font-bold text-slate-900 tracking-tight leading-tight">
+                Dermalyze
+              </h1>
+              <p className="text-[9px] text-slate-500 uppercase tracking-wider font-semibold leading-tight">
+                Clinical Decision Support
+              </p>
             </div>
           </button>
           <div className="flex items-center gap-3">
@@ -154,22 +166,42 @@ const LoginScreen: React.FC<LoginScreenProps> = ({
           <div className="bg-white rounded-2xl border border-slate-300 shadow-sm p-10">
             <div className="mb-8">
               <h2 className="text-2xl font-bold text-slate-900 mb-2">Sign In</h2>
-              <p className="text-sm text-slate-600">Access your dermatology classification workspace</p>
+              <p className="text-sm text-slate-600">
+                Access your dermatology classification workspace
+              </p>
             </div>
 
             <form onSubmit={handleSubmit} className="space-y-5">
               {error && (
-                <div role="alert" aria-live="assertive" className="p-4 bg-red-50 border border-red-200 text-red-700 text-sm rounded-xl">
+                <div
+                  role="alert"
+                  aria-live="assertive"
+                  className="p-4 bg-red-50 border border-red-200 text-red-700 text-sm rounded-xl"
+                >
                   <div className="flex items-start gap-3">
-                    <svg className="w-5 h-5 shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    <svg
+                      className="w-5 h-5 shrink-0 mt-0.5"
+                      fill="none"
+                      stroke="currentColor"
+                      viewBox="0 0 24 24"
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={2}
+                        d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+                      />
                     </svg>
                     <span>{error}</span>
                   </div>
                 </div>
               )}
               {lockedUntil && (
-                <div role="status" aria-live="polite" className="p-3 bg-amber-50 border border-amber-200 text-amber-800 text-sm rounded-xl text-center font-medium">
+                <div
+                  role="status"
+                  aria-live="polite"
+                  className="p-3 bg-amber-50 border border-amber-200 text-amber-800 text-sm rounded-xl text-center font-medium"
+                >
                   Account temporarily locked — retry in {lockCountdown}s
                 </div>
               )}
@@ -177,7 +209,7 @@ const LoginScreen: React.FC<LoginScreenProps> = ({
               <Input
                 label="Email Address"
                 type="email"
-                placeholder="your.email@example.com"
+                placeholder="Email address"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 required
@@ -186,7 +218,7 @@ const LoginScreen: React.FC<LoginScreenProps> = ({
               <Input
                 label="Password"
                 type="password"
-                placeholder="Enter your password"
+                placeholder="Password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 required
@@ -202,16 +234,33 @@ const LoginScreen: React.FC<LoginScreenProps> = ({
                 </button>
               </div>
 
-              <Button type="submit" disabled={loading || !!(lockedUntil && Date.now() < lockedUntil)} className="shadow-sm">
+              <Button
+                type="submit"
+                disabled={loading || !!(lockedUntil && Date.now() < lockedUntil)}
+                className="shadow-sm"
+              >
                 {loading ? (
                   <span className="flex items-center justify-center gap-2">
                     <svg className="animate-spin h-5 w-5" viewBox="0 0 24 24" fill="none">
-                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                      <circle
+                        className="opacity-25"
+                        cx="12"
+                        cy="12"
+                        r="10"
+                        stroke="currentColor"
+                        strokeWidth="4"
+                      />
+                      <path
+                        className="opacity-75"
+                        fill="currentColor"
+                        d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
+                      />
                     </svg>
                     Signing in...
                   </span>
-                ) : 'Sign In'}
+                ) : (
+                  'Sign In'
+                )}
               </Button>
             </form>
 
@@ -230,7 +279,8 @@ const LoginScreen: React.FC<LoginScreenProps> = ({
 
           {/* Footer Note */}
           <p className="mt-8 text-center text-xs text-slate-400 leading-relaxed px-4">
-            By signing in, you confirm that you are a qualified medical professional using this system in accordance with professional guidelines.
+            By signing in, you confirm that you are a qualified medical professional using this
+            system in accordance with professional guidelines.
           </p>
         </div>
       </div>
