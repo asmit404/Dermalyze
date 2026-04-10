@@ -175,9 +175,8 @@ def apply_ham10000_search_space(
     override_ema_save_best: Optional[bool] = None,
 ) -> Dict[str, Any]:
     model_cfg, train_cfg, loss_cfg, scheduler_cfg, ema_cfg = _ensure_sections(config)
-    data_cfg = config.setdefault("data", {})
 
-    train_cfg["epochs"] = trial.suggest_int("epochs", 18, 36)
+    train_cfg["epochs"] = trial.suggest_int("epochs", 18, 40)
     train_cfg["batch_size"] = 16
     train_cfg["lr"] = trial.suggest_float("lr", 1e-5, 8e-4, log=True)
     train_cfg["weight_decay"] = trial.suggest_float(
@@ -226,17 +225,13 @@ def apply_ham10000_search_space(
     loss_cfg["label_smoothing"] = trial.suggest_float("label_smoothing", 0.01, 0.08)
     loss_cfg["type"] = "label_smoothing"
 
-    use_metadata = bool(data_cfg.get("use_metadata", False))
-    if use_metadata:
-        train_cfg["mixup_alpha"] = 0.0
-        train_cfg["cutmix_alpha"] = 0.0
-        train_cfg["mixup_prob"] = 0.0
-        train_cfg["cutmix_prob"] = 0.0
-    else:
-        train_cfg["mixup_alpha"] = trial.suggest_float("mixup_alpha", 0.0, 0.4)
-        train_cfg["cutmix_alpha"] = trial.suggest_float("cutmix_alpha", 0.0, 0.4)
-        train_cfg["mixup_prob"] = trial.suggest_float("mixup_prob", 0.1, 0.7)
-        train_cfg["cutmix_prob"] = trial.suggest_float("cutmix_prob", 0.1, 0.9)
+    # train.py supports metadata-aware MixUp/CutMix, so keep these tunable for
+    # both image-only and metadata-fusion models.
+    train_cfg["mixup_alpha"] = trial.suggest_float("mixup_alpha", 0.0, 0.4)
+    train_cfg["cutmix_alpha"] = trial.suggest_float("cutmix_alpha", 0.0, 0.4)
+    train_cfg["mixup_prob"] = trial.suggest_float("mixup_prob", 0.0, 0.7)
+    # Deprecated in train.py; avoid tuning an unused hyperparameter.
+    train_cfg.pop("cutmix_prob", None)
 
     train_cfg["early_stopping_patience"] = trial.suggest_int(
         "early_stopping_patience", 5, 12
