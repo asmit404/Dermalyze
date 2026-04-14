@@ -6,8 +6,8 @@ the model's prediction.
 
 from __future__ import annotations
 
-import io
 import base64
+import io
 from typing import Optional, Tuple, Union
 
 import numpy as np
@@ -39,7 +39,9 @@ class GradCAM:
 
         # Register hooks
         self._forward_hook = target_layer.register_forward_hook(self._save_activation)
-        self._backward_hook = target_layer.register_full_backward_hook(self._save_gradient)
+        self._backward_hook = target_layer.register_full_backward_hook(
+            self._save_gradient
+        )
 
     def _save_activation(
         self, module: nn.Module, input: Tuple[torch.Tensor, ...], output: torch.Tensor
@@ -50,11 +52,20 @@ class GradCAM:
     def _save_gradient(
         self,
         module: nn.Module,
-        grad_input: Tuple[Optional[torch.Tensor], ...],
-        grad_output: Tuple[torch.Tensor, ...],
+        grad_input: Union[Tuple[torch.Tensor, ...], torch.Tensor],
+        grad_output: Union[Tuple[torch.Tensor, ...], torch.Tensor],
     ) -> None:
         """Backward hook to capture gradients."""
-        self.gradients = grad_output[0].detach()
+        _ = module, grad_input
+
+        if isinstance(grad_output, tuple):
+            if not grad_output:
+                raise RuntimeError("Grad-CAM backward hook received empty gradients")
+            gradient = grad_output[0]
+        else:
+            gradient = grad_output
+
+        self.gradients = gradient.detach()
 
     def remove_hooks(self) -> None:
         """Remove registered hooks to free resources."""
@@ -111,7 +122,7 @@ class GradCAM:
         self.model.eval()
 
         if target_class is None:
-            target_class = output.argmax(dim=1).item()
+            target_class = int(output.argmax(dim=1).item())
 
         # Zero gradients
         self.model.zero_grad()
@@ -157,6 +168,7 @@ def get_target_layer(model: nn.Module) -> nn.Module:
     Returns:
         The target convolutional layer for Grad-CAM
     """
+
     def _unwrap_gradcam_base_model(candidate: nn.Module) -> nn.Module:
         """Unwrap common wrapper modules until a feature extractor is reached."""
         seen = set()
@@ -194,7 +206,9 @@ def get_target_layer(model: nn.Module) -> nn.Module:
         return features[-1]
 
     # Last-resort fallback: use the deepest Conv2d to avoid hard failure.
-    conv_layers = [module for module in base_model.modules() if isinstance(module, nn.Conv2d)]
+    conv_layers = [
+        module for module in base_model.modules() if isinstance(module, nn.Conv2d)
+    ]
     if conv_layers:
         return conv_layers[-1]
 
@@ -266,11 +280,15 @@ def create_heatmap_overlay(
     original_size = original_image.size  # (W, H)
 
     # Resize heatmap to match original image
-    heatmap_resized = np.array(
-        Image.fromarray((heatmap * 255).astype(np.uint8)).resize(
-            original_size, resample=Image.BILINEAR
+    bilinear_resample = getattr(getattr(Image, "Resampling", Image), "BILINEAR")
+    heatmap_resized = (
+        np.array(
+            Image.fromarray((heatmap * 255).astype(np.uint8)).resize(
+                original_size, resample=bilinear_resample
+            )
         )
-    ) / 255.0
+        / 255.0
+    )
 
     # Apply colormap
     colored_heatmap = apply_colormap(heatmap_resized, colormap)
