@@ -46,6 +46,8 @@ const TIME_PERIOD_OPTIONS = [
   { value: '30d', label: 'Last Month' },
   { value: '365d', label: 'Last Year' },
 ];
+const FILTER_DROPDOWN_CLASS =
+  'w-full appearance-none px-3.5 py-2.5 pr-10 text-sm border border-slate-300 rounded-lg bg-gradient-to-b from-white to-slate-50 text-slate-700 shadow-sm focus:outline-none focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500 transition-colors';
 
 interface FilterState {
   timePeriod: string;
@@ -715,11 +717,11 @@ const HistoryScreen: React.FC<HistoryScreenProps> = ({ onBack, onViewDetails }) 
                 </div>
 
                 {/* Time Period Dropdown */}
-                <div className="sm:w-44">
+                <div className="sm:w-44 relative">
                   <select
                     value={filters.timePeriod}
                     onChange={(e) => setFilters({ ...filters, timePeriod: e.target.value })}
-                    className="w-full px-3 py-2.5 text-sm border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500 focus:border-transparent bg-white"
+                    className={FILTER_DROPDOWN_CLASS}
                   >
                     {TIME_PERIOD_OPTIONS.map((opt) => (
                       <option key={opt.value} value={opt.value}>
@@ -727,6 +729,16 @@ const HistoryScreen: React.FC<HistoryScreenProps> = ({ onBack, onViewDetails }) 
                       </option>
                     ))}
                   </select>
+                  <div className="pointer-events-none absolute inset-y-0 right-3 flex items-center text-slate-400">
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={2}
+                        d="M19 9l-7 7-7-7"
+                      />
+                    </svg>
+                  </div>
                 </div>
               </div>
 
@@ -866,11 +878,11 @@ const HistoryScreen: React.FC<HistoryScreenProps> = ({ onBack, onViewDetails }) 
                 </button>
 
                 {/* Sort Dropdown */}
-                <div className="sm:w-48 ml-auto">
+                <div className="sm:w-48 ml-auto relative">
                   <select
                     value={filters.sortBy}
                     onChange={(e) => setFilters({ ...filters, sortBy: e.target.value })}
-                    className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500 focus:border-transparent bg-white"
+                    className={FILTER_DROPDOWN_CLASS}
                   >
                     {SORT_OPTIONS.map((opt) => (
                       <option key={opt.value} value={opt.value}>
@@ -878,6 +890,16 @@ const HistoryScreen: React.FC<HistoryScreenProps> = ({ onBack, onViewDetails }) 
                       </option>
                     ))}
                   </select>
+                  <div className="pointer-events-none absolute inset-y-0 right-3 flex items-center text-slate-400">
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={2}
+                        d="M19 9l-7 7-7-7"
+                      />
+                    </svg>
+                  </div>
                 </div>
 
                 {/* Clear Filters Button (only when active) */}

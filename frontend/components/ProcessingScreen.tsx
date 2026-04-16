@@ -1,14 +1,20 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { classifyImage, ApiError } from '../lib/api';
-import type { ClassResult } from '../lib/types';
+import type { ClassResult, InferenceMetadata } from '../lib/types';
 
 interface ProcessingScreenProps {
   image: string | null;
+  metadata: InferenceMetadata;
   onComplete: (results: ClassResult[], gradcamImage?: string) => void;
   onError: (message?: string, retryable?: boolean) => void;
 }
 
-const ProcessingScreen: React.FC<ProcessingScreenProps> = ({ image, onComplete, onError }) => {
+const ProcessingScreen: React.FC<ProcessingScreenProps> = ({
+  image,
+  metadata,
+  onComplete,
+  onError,
+}) => {
   const [statusText, setStatusText] = useState('Validating image type…');
   const calledRef = useRef(false); // prevent double-invoke in React StrictMode
 
@@ -27,7 +33,7 @@ const ProcessingScreen: React.FC<ProcessingScreenProps> = ({ image, onComplete, 
         await new Promise((r) => setTimeout(r, 400));
 
         setStatusText('Running model inference…');
-        const result = await classifyImage(image);
+        const result = await classifyImage(image, true, metadata);
 
         setStatusText('Finalising results…');
         await new Promise((r) => setTimeout(r, 300));

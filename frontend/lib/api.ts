@@ -1,4 +1,4 @@
-import type { ClassResult } from './types';
+import type { ClassResult, InferenceMetadata } from './types';
 import { supabase } from './supabase';
 
 export class ApiError extends Error {
@@ -45,7 +45,8 @@ const assertValidResponse = (payload: unknown): ClassifyResponse => {
 
 export const classifyImage = async (
   imageDataUrl: string,
-  includeGradcam: boolean = true
+  includeGradcam: boolean = true,
+  metadata?: InferenceMetadata
 ): Promise<ClassifyResult> => {
   // Get current Supabase session
   // Supabase auto-refreshes tokens (autoRefreshToken: true in supabase.ts)
@@ -63,6 +64,20 @@ export const classifyImage = async (
 
   const formData = new FormData();
   formData.append('file', imageBlob, `lesion.${imageExt}`);
+
+  if (typeof metadata?.ageApprox === 'number' && Number.isFinite(metadata.ageApprox)) {
+    formData.append('age_approx', metadata.ageApprox.toString());
+  }
+
+  const normalizedSex = metadata?.sex?.trim().toLowerCase();
+  if (normalizedSex) {
+    formData.append('sex', normalizedSex);
+  }
+
+  const normalizedAnatomSite = metadata?.anatomSite?.trim().toLowerCase();
+  if (normalizedAnatomSite) {
+    formData.append('anatom_site', normalizedAnatomSite);
+  }
 
   // Add include_gradcam query parameter
   const url = new URL(`${API_BASE_URL}/classify`, window.location.origin);

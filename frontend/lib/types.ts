@@ -4,6 +4,12 @@ export interface ClassResult {
   score: number;
 }
 
+export interface InferenceMetadata {
+  ageApprox: number | null;
+  sex: string | null;
+  anatomSite: string | null;
+}
+
 export interface AnalysisHistoryItem {
   id: string;
   createdAt: string; // ISO timestamp for calculations

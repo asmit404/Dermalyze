@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback, lazy, Suspense } from 'react';
 import { Routes, Route, Navigate, useNavigate, useLocation } from 'react-router-dom';
 import { supabase } from './lib/supabase';
-import type { ClassResult, AnalysisHistoryItem } from './lib/types';
+import type { ClassResult, AnalysisHistoryItem, InferenceMetadata } from './lib/types';
 import ErrorBoundary from './components/ErrorBoundary';
 import AppLayout from './components/AppLayout';
 
@@ -58,6 +58,12 @@ const SIGNUP_EMAIL_KEY = 'dermalyze_signup_email';
 const IDLE_TIMEOUT_MS = 30 * 60 * 1_000; // 30 minutes
 const IDLE_WARN_MS = 28 * 60 * 1_000; // warn 2 minutes before
 
+const createEmptyInferenceMetadata = (): InferenceMetadata => ({
+  ageApprox: null,
+  sex: null,
+  anatomSite: null,
+});
+
 // ── Loading fallback ──────────────────────────────────────────────────────────
 const PageLoader = () => (
   <div className="flex-1 flex items-center justify-center min-h-screen">
@@ -95,6 +101,9 @@ const App: React.FC = () => {
   const location = useLocation();
 
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
+  const [inferenceMetadata, setInferenceMetadata] = useState<InferenceMetadata>(
+    createEmptyInferenceMetadata
+  );
   const [analysisResults, setAnalysisResults] = useState<ClassResult[] | null>(null);
   const [analysisGradcam, setAnalysisGradcam] = useState<string | null>(null);
   const [analysisCaseId, setAnalysisCaseId] = useState<string | null>(null);
@@ -193,6 +202,7 @@ const App: React.FC = () => {
   const handleConfirmLogout = async () => {
     setShowLogoutConfirm(false);
     setSelectedImage(null);
+    setInferenceMetadata(createEmptyInferenceMetadata());
     setSelectedHistoryItem(null);
     const { error } = await supabase.auth.signOut();
     if (error) {
@@ -209,6 +219,7 @@ const App: React.FC = () => {
 
   const resetAnalysis = () => {
     setSelectedImage(null);
+    setInferenceMetadata(createEmptyInferenceMetadata());
     setAnalysisResults(null);
     setAnalysisGradcam(null);
     setAnalysisCaseId(null);
@@ -329,7 +340,9 @@ const App: React.FC = () => {
                 <AppLayout onLogout={handleRequestLogout}>
                   <UploadScreen
                     selectedImage={selectedImage}
+                    metadata={inferenceMetadata}
                     onImageSelect={setSelectedImage}
+                    onMetadataChange={setInferenceMetadata}
                     onBack={() => navigate(ROUTES.dashboard)}
                     onRunClassification={() => navigate(ROUTES.processing)}
                     onError={(msg) => {
@@ -349,6 +362,7 @@ const App: React.FC = () => {
                   <AppLayout onLogout={handleRequestLogout}>
                     <ProcessingScreen
                       image={selectedImage}
+                      metadata={inferenceMetadata}
                       onComplete={(results, gradcamImage) => {
                         const caseId = crypto.randomUUID();
                         setAnalysisCaseId(caseId);
