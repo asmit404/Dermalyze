@@ -13,19 +13,19 @@ def analyze_fit(history_file):
     recent_gap = [train_loss[i] - val_loss[i] for i in range(-5, 0)]
     avg_gap = sum(recent_gap) / len(recent_gap)
 
-    print(f"📊 Recent Gap (last 5 epochs): {avg_gap:.4f}")
+    print(f" Recent Gap (last 5 epochs): {avg_gap:.4f}")
 
     if avg_gap < -0.02:
-        print("⚠️  UNDERFITTING - Model too weak, increase capacity")
+        print("  UNDERFITTING - Model too weak, increase capacity")
         return "underfit"
     elif avg_gap < 0.05:
-        print("✅ BALANCED - Good generalization!")
+        print(" BALANCED - Good generalization!")
         return "balanced"
     elif avg_gap < 0.15:
-        print("⚠️  MILD OVERFITTING - Increase regularization slightly")
+        print("  MILD OVERFITTING - Increase regularization slightly")
         return "mild_overfit"
     else:
-        print("🚨 SEVERE OVERFITTING - Apply aggressive regularization")
+        print(" SEVERE OVERFITTING - Apply aggressive regularization")
         return "severe_overfit"
 
 

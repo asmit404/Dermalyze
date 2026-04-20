@@ -76,7 +76,7 @@ This document explains all supported parameters in `config.yaml`, including vali
 - **Type:** bool
 - **Default:** `true`
 - **Description:** Enable multi-input model architecture combining images + patient metadata for improved accuracy.
-- **Accuracy Impact:** 🎯 **+2-5% improvement** over image-only models
+- **Accuracy Impact:**  **+2-5% improvement** over image-only models
 - **Requirements:**
   - CSV must have columns: `age_approx`, `sex`, `anatom_site`
   - Run data preparation with metadata: `python src/prepare_data.py --data-dir data/HAM10000_Training --include-metadata`
@@ -201,10 +201,10 @@ This document explains all supported parameters in `config.yaml`, including vali
 | EfficientNet-B5 | 456 | 14-16GB | Slow | High accuracy |
 | EfficientNet-B6 | 528 | 16GB+ | Slow | Very high accuracy |
 | EfficientNet-B7 | 600 | 20GB+ | Slowest | Best accuracy |
-| EfficientNetV2-S | 224-384 | 8-12GB | ⚡ Fast | Faster than v1 |
+| EfficientNetV2-S | 224-384 | 8-12GB |  Fast | Faster than v1 |
 | EfficientNetV2-M | 384-480 | 12-16GB | Medium | Balanced v2 |
 | EfficientNetV2-L | 384-480 | 16GB+ | Medium | High-capacity v2 |
-| ConvNeXt-Tiny | 224-256 | 8-10GB | ⚡ Fast | Modern ConvNet |
+| ConvNeXt-Tiny | 224-256 | 8-10GB |  Fast | Modern ConvNet |
 | ResNeSt-101 | 224-384 | 10-14GB | Medium | Current default, strong multi-scale |
 | SE-ResNeXt-101 | 224-384 | 10-14GB | Medium | Attention mechanism |
 
@@ -584,7 +584,7 @@ These parameters control ensemble prediction using multiple model checkpoints. W
 - **Type:** bool
 - **Default:** `false`
 - **Description:** Enable ensemble evaluation with multiple model checkpoints
-- **Accuracy Impact:** 🎯 **+1-3% typical improvement** over single best model
+- **Accuracy Impact:**  **+1-3% typical improvement** over single best model
 - **Usage:** Provide multiple checkpoints via CLI `--checkpoint` flag:
 
   ```bash

@@ -29,6 +29,33 @@ from src.data.dataset import load_and_split_data, create_dataloaders
 from src.models.efficientnet import create_model
 
 
+def resolve_augmentation_settings(
+    train_config: Dict[str, Any],
+) -> tuple[str, Dict[str, Any] | None]:
+    """Normalize training.augmentation from string or mapping config formats."""
+    augmentation_raw = train_config.get("augmentation", "medium")
+    augmentation_config: Dict[str, Any] | None = None
+
+    if isinstance(augmentation_raw, dict):
+        augmentation_config = dict(augmentation_raw)
+        augmentation_strength = str(augmentation_config.get("type", "medium")).strip().lower()
+        augmentation_config["type"] = augmentation_strength
+    elif isinstance(augmentation_raw, str):
+        augmentation_strength = augmentation_raw.strip().lower()
+    else:
+        raise ValueError(
+            "training.augmentation must be a string or a mapping with a 'type' field"
+        )
+
+    allowed = {"light", "medium", "heavy", "domain", "randaugment"}
+    if augmentation_strength not in allowed:
+        raise ValueError(
+            "training.augmentation.type must be one of: light, medium, heavy, domain, randaugment"
+        )
+
+    return augmentation_strength, augmentation_config
+
+
 def format_time(seconds: float) -> str:
     """Format time in human-readable format."""
     if seconds < 1:
@@ -51,7 +78,7 @@ def benchmark_data_loading(
     device: torch.device = torch.device("cpu"),
 ) -> Dict[str, float]:
     """Benchmark data loading speed."""
-    print(f"\n📊 Benchmarking data loading ({num_batches} batches)...")
+    print(f"\nBenchmarking data loading ({num_batches} batches)...")
 
     times = []
     total_samples = 0
@@ -84,8 +111,8 @@ def benchmark_data_loading(
     avg_time = sum(times) / len(times)
     throughput = total_samples / sum(times)
 
-    print(f"  ✓ Avg batch time: {format_time(avg_time)}")
-    print(f"  ✓ Throughput: {throughput:.1f} samples/sec")
+    print(f"  Avg batch time: {format_time(avg_time)}")
+    print(f"  Throughput: {throughput:.1f} samples/sec")
 
     return {
         "avg_batch_time": avg_time,
@@ -100,7 +127,7 @@ def benchmark_forward_pass(
     num_batches: int = 50,
 ) -> Dict[str, float]:
     """Benchmark forward pass speed."""
-    print(f"\n🚀 Benchmarking forward pass ({num_batches} batches)...")
+    print(f"\nBenchmarking forward pass ({num_batches} batches)...")
 
     model.eval()
     times = []
@@ -139,8 +166,8 @@ def benchmark_forward_pass(
     avg_time = sum(times) / len(times)
     throughput = total_samples / sum(times)
 
-    print(f"  ✓ Avg forward time: {format_time(avg_time)}")
-    print(f"  ✓ Throughput: {throughput:.1f} samples/sec")
+    print(f"  Avg forward time: {format_time(avg_time)}")
+    print(f"  Throughput: {throughput:.1f} samples/sec")
 
     return {
         "avg_forward_time": avg_time,
@@ -157,7 +184,7 @@ def benchmark_training_step(
     num_batches: int = 50,
 ) -> Dict[str, float]:
     """Benchmark full training step (forward + backward + optimizer)."""
-    print(f"\n🔥 Benchmarking training step ({num_batches} batches)...")
+    print(f"\nBenchmarking training step ({num_batches} batches)...")
 
     model.train()
     times = {
@@ -239,11 +266,11 @@ def benchmark_training_step(
     avg_total = sum(times["total"]) / len(times["total"])
     throughput = total_samples / sum(times["total"])
 
-    print(f"  ✓ Avg forward time: {format_time(avg_forward)}")
-    print(f"  ✓ Avg backward time: {format_time(avg_backward)}")
-    print(f"  ✓ Avg optimizer time: {format_time(avg_optimizer)}")
-    print(f"  ✓ Avg total time: {format_time(avg_total)}")
-    print(f"  ✓ Throughput: {throughput:.1f} samples/sec")
+    print(f"  Avg forward time: {format_time(avg_forward)}")
+    print(f"  Avg backward time: {format_time(avg_backward)}")
+    print(f"  Avg optimizer time: {format_time(avg_optimizer)}")
+    print(f"  Avg total time: {format_time(avg_total)}")
+    print(f"  Throughput: {throughput:.1f} samples/sec")
 
     return {
         "avg_forward_time": avg_forward,
@@ -290,23 +317,23 @@ def main():
     args = parser.parse_args()
 
     # Load config
-    print("📋 Loading configuration...")
+    print("Loading configuration...")
     with open(args.config) as f:
         config = yaml.safe_load(f)
 
     # Setup device
     if torch.cuda.is_available():
         device = torch.device("cuda")
-        print(f"🎮 Using CUDA: {torch.cuda.get_device_name(0)}")
+        print(f"Using CUDA: {torch.cuda.get_device_name(0)}")
     elif torch.backends.mps.is_available():
         device = torch.device("mps")
-        print("🍎 Using Apple MPS (M4)")
+        print("Using Apple MPS (M4)")
     else:
         device = torch.device("cpu")
-        print("💻 Using CPU")
+        print("Using CPU")
 
     # Load data
-    print("\n📁 Loading data...")
+    print("\nLoading data...")
     data_config = config.get("data", {})
     train_config = config.get("training", {})
 
@@ -319,12 +346,15 @@ def main():
         lesion_aware=data_config.get("lesion_aware", True),
     )
 
-    print(f"  ✓ Train samples: {len(train_df)}")
+    print(f"  Train samples: {len(train_df)}")
 
     # Create dataloaders
-    print("\n🔄 Creating dataloaders...")
+    print("\nCreating dataloaders...")
     batch_size = train_config.get("batch_size", 32)
     num_workers = train_config.get("num_workers", 4)
+    augmentation_strength, augmentation_config = resolve_augmentation_settings(
+        train_config
+    )
 
     train_loader, _, _ = create_dataloaders(
         train_df=train_df,
@@ -334,7 +364,8 @@ def main():
         batch_size=batch_size,
         num_workers=num_workers,
         image_size=config.get("model", {}).get("image_size", 224),
-        augmentation_strength=train_config.get("augmentation", "medium"),
+        augmentation_strength=augmentation_strength,
+        augmentation_config=augmentation_config,
         use_weighted_sampling=train_config.get("use_weighted_sampling", True),
         pin_memory=device.type == "cuda",
         prefetch_factor=train_config.get("prefetch_factor", 2),
@@ -342,12 +373,12 @@ def main():
         and num_workers > 0,
     )
 
-    print(f"  ✓ Batch size: {batch_size}")
-    print(f"  ✓ Num workers: {num_workers}")
-    print(f"  ✓ Batches per epoch: {len(train_loader)}")
+    print(f"  Batch size: {batch_size}")
+    print(f"  Num workers: {num_workers}")
+    print(f"  Batches per epoch: {len(train_loader)}")
 
     # Create model
-    print("\n🤖 Creating model (EfficientNet-V2-S)...")
+    print("\nCreating model (EfficientNet-V2-S)...")
     model_config = config.get("model", {})
     model = create_model(
         num_classes=model_config.get("num_classes", 7),
@@ -363,19 +394,19 @@ def main():
         and hasattr(torch, "compile")
         and device.type != "mps"
     ):
-        print("  ⚡ Compiling model with torch.compile()...")
+        print("  Compiling model with torch.compile()...")
         try:
             model = torch.compile(model, mode="default")
-            print("  ✓ Model compiled successfully")
+            print("  Model compiled successfully")
         except Exception as e:
-            print(f"  ⚠️  Compilation failed: {e}")
+            print(f"  Warning: Compilation failed: {e}")
     elif device.type == "mps":
         print(
-            "  ⚠️  Skipping torch.compile for MPS (known backward pass issues in benchmark)"
+            "  Warning: Skipping torch.compile for MPS (known backward pass issues in benchmark)"
         )
 
-    print(f"  ✓ Total params: {model.get_total_params():,}")
-    print(f"  ✓ Trainable params: {model.get_trainable_params():,}")
+    print(f"  Total params: {model.get_total_params():,}")
+    print(f"  Trainable params: {model.get_trainable_params():,}")
 
     # Create optimizer and criterion
     criterion = torch.nn.CrossEntropyLoss()
@@ -383,13 +414,13 @@ def main():
 
     # Initial memory
     mem_before = get_memory_usage(device)
-    print(f"\n💾 Initial memory:")
+    print(f"\nInitial memory:")
     print(f"  Allocated: {format_memory(mem_before['allocated'])}")
     print(f"  Reserved: {format_memory(mem_before['reserved'])}")
 
     # Run benchmarks
     print("\n" + "=" * 60)
-    print("🔬 PERFORMANCE BENCHMARKS")
+    print("PERFORMANCE BENCHMARKS")
     print("=" * 60)
 
     data_results = benchmark_data_loading(train_loader, args.num_batches, device)
@@ -402,20 +433,20 @@ def main():
 
     # Final memory
     mem_after = get_memory_usage(device)
-    print(f"\n💾 Peak memory:")
+    print(f"\nPeak memory:")
     print(f"  Allocated: {format_memory(mem_after['allocated'])}")
     print(f"  Reserved: {format_memory(mem_after['reserved'])}")
 
     # Summary
     print("\n" + "=" * 60)
-    print("📊 SUMMARY")
+    print("SUMMARY")
     print("=" * 60)
     print(f"Data loading: {format_time(data_results['avg_batch_time'])} per batch")
     print(f"Forward pass: {format_time(forward_results['avg_forward_time'])} per batch")
     print(f"Training step: {format_time(training_results['avg_total_time'])} per batch")
-    print(f"  └─ Forward: {format_time(training_results['avg_forward_time'])}")
-    print(f"  └─ Backward: {format_time(training_results['avg_backward_time'])}")
-    print(f"  └─ Optimizer: {format_time(training_results['avg_optimizer_time'])}")
+    print(f"  - Forward: {format_time(training_results['avg_forward_time'])}")
+    print(f"  - Backward: {format_time(training_results['avg_backward_time'])}")
+    print(f"  - Optimizer: {format_time(training_results['avg_optimizer_time'])}")
     print(f"\nTraining throughput: {training_results['throughput']:.1f} samples/sec")
 
     # Estimate epoch time
@@ -423,7 +454,7 @@ def main():
     epoch_time = training_results["avg_total_time"] * batches_per_epoch
     print(f"Estimated epoch time: {epoch_time/60:.1f} minutes")
 
-    print("\n✅ Benchmark complete!")
+    print("\nBenchmark complete!")
 
 
 if __name__ == "__main__":

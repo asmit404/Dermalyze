@@ -91,15 +91,15 @@ def train_model(
         # Check if training was successful
         checkpoint = output_dir / "checkpoint_best.pt"
         if checkpoint.exists():
-            print(f"✓ Model {model_name} trained successfully!")
+            print(f" Model {model_name} trained successfully!")
             print(f"  Best checkpoint: {checkpoint}")
             return True
         else:
-            print(f"✗ Model {model_name} training failed! No checkpoint found.")
+            print(f" Model {model_name} training failed! No checkpoint found.")
             return False
 
     except subprocess.CalledProcessError as e:
-        print(f"✗ Model {model_name} training failed with error!")
+        print(f" Model {model_name} training failed with error!")
         print(f"  Error: {e}")
         return False
     finally:
@@ -213,19 +213,19 @@ def main():
 
     if n_splits < len(model_names):
         print(
-            f"✗ data.kfold.n_splits ({n_splits}) must be >= number of models ({len(model_names)}) "
+            f" data.kfold.n_splits ({n_splits}) must be >= number of models ({len(model_names)}) "
             "for unique fold assignment."
         )
         sys.exit(1)
 
     if args.start_fold < 0 or args.start_fold >= n_splits:
-        print(f"✗ --start-fold must be in [0, {n_splits - 1}], got {args.start_fold}")
+        print(f" --start-fold must be in [0, {n_splits - 1}], got {args.start_fold}")
         sys.exit(1)
 
     fold_indices = [(args.start_fold + i) % n_splits for i in range(len(model_names))]
     if len(set(fold_indices)) != len(fold_indices):
         print(
-            "✗ Computed fold indices are not unique. Increase n_splits or adjust start fold."
+            " Computed fold indices are not unique. Increase n_splits or adjust start fold."
         )
         sys.exit(1)
 
@@ -264,7 +264,7 @@ def main():
     with open(metadata_file, "w") as f:
         json.dump(metadata, f, indent=2)
 
-    print(f"✓ Created ensemble metadata: {metadata_file}")
+    print(f" Created ensemble metadata: {metadata_file}")
     print()
 
     # Train each model
@@ -286,7 +286,7 @@ def main():
         )
 
         if not success:
-            print(f"\n✗ Training failed for model {name}")
+            print(f"\n Training failed for model {name}")
             sys.exit(1)
 
     # Summary
@@ -294,7 +294,7 @@ def main():
     print("Ensemble Training Complete!")
     print(f"{'='*60}")
     print()
-    print("✓ All 3 models trained successfully!")
+    print(" All 3 models trained successfully!")
     print()
     print(f"Ensemble directory: {args.output}")
     print()
@@ -309,10 +309,10 @@ def main():
 
     # Create convenience scripts
     eval_script = create_evaluation_script(args.output, model_dirs)
-    print(f"✓ Created evaluation script: {eval_script}")
+    print(f" Created evaluation script: {eval_script}")
 
     inference_script = create_inference_script(args.output, model_dirs)
-    print(f"✓ Created inference script: {inference_script}")
+    print(f" Created inference script: {inference_script}")
     print()
 
     # Usage instructions

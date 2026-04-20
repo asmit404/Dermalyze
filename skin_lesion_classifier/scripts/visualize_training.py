@@ -121,7 +121,7 @@ def plot_training_curves(history, output_path):
 
     plt.tight_layout()
     plt.savefig(output_path, dpi=150, bbox_inches="tight")
-    print(f"✓ Saved training curves to: {output_path}")
+    print(f" Saved training curves to: {output_path}")
     plt.close()
 
 
@@ -148,39 +148,39 @@ def print_overfitting_analysis(history):
     print("OVERFITTING ANALYSIS")
     print("=" * 70)
 
-    print(f"\n📊 Final Metrics (Epoch {len(train_loss)}):")
+    print(f"\n Final Metrics (Epoch {len(train_loss)}):")
     print(f"  Training Loss:     {train_loss[-1]:.4f}")
     print(f"  Validation Loss:   {val_loss[-1]:.4f}")
     print(f"  Training Accuracy: {train_acc[-1]:.4f}")
     print(f"  Validation Accuracy: {val_acc[-1]:.4f}")
 
-    print(f"\n🎯 Best Epoch: {best_epoch + 1}")
+    print(f"\n Best Epoch: {best_epoch + 1}")
     print(f"  Best Val Loss:     {val_loss[best_epoch]:.4f}")
     print(f"  Best Val Accuracy: {val_acc[best_epoch]:.4f}")
 
-    print(f"\n📈 Generalization Gaps:")
+    print(f"\n Generalization Gaps:")
     print(f"  Final Loss Gap:    {final_loss_gap:.4f} ({final_loss_gap*100:.1f}%)")
     print(f"  Final Accuracy Gap: {final_acc_gap:.4f} ({final_acc_gap*100:.1f}%)")
     print(f"  Best Loss Gap:     {best_loss_gap:.4f}")
 
     # Diagnosis
-    print(f"\n🔍 Diagnosis:")
+    print(f"\n Diagnosis:")
     if final_loss_gap < 0.05:
-        print("  ✅ GOOD: Minimal overfitting detected")
+        print("   GOOD: Minimal overfitting detected")
         severity = "GOOD"
     elif final_loss_gap < 0.10:
-        print("  ⚠️  MODERATE: Some overfitting present")
+        print("    MODERATE: Some overfitting present")
         severity = "MODERATE"
     else:
-        print("  🚨 SEVERE: Significant overfitting detected!")
+        print("   SEVERE: Significant overfitting detected!")
         severity = "SEVERE"
 
     if val_loss_increasing and train_loss_decreasing:
-        print("  ⚠️  Validation loss increasing while training loss decreasing")
+        print("    Validation loss increasing while training loss decreasing")
         print("     → Classic overfitting pattern")
 
     # Recommendations
-    print(f"\n💡 Recommendations:")
+    print(f"\n Recommendations:")
     if severity == "SEVERE":
         print("  1. Use config_anti_overfit.yaml for next training")
         print("  2. Increase dropout to 0.5-0.6")
@@ -217,13 +217,13 @@ def main():
     # Load training history
     history_path = args.run / "training_history.json"
     if not history_path.exists():
-        print(f"❌ Error: {history_path} not found")
+        print(f" Error: {history_path} not found")
         return
 
     with open(history_path, "r") as f:
         history = json.load(f)
 
-    print(f"\n📂 Analyzing run: {args.run.name}")
+    print(f"\n Analyzing run: {args.run.name}")
 
     # Create visualizations
     output_path = args.run / "training_analysis.png"
@@ -238,7 +238,7 @@ def main():
         f.write(f"Overfitting Severity: {severity}\n")
         f.write(f"See training_analysis.png for visualizations\n")
 
-    print(f"✓ Analysis saved to: {args.run}")
+    print(f" Analysis saved to: {args.run}")
 
 
 if __name__ == "__main__":

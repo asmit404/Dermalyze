@@ -2,7 +2,7 @@
 
 Training, evaluation, and experimentation pipeline for 7-class skin lesion classification.
 
-> ⚠️ DISCLAIMER: Educational/research purposes only. Not for medical diagnosis.
+>  DISCLAIMER: Educational/research purposes only. Not for medical diagnosis.
 
 ## Scope
 

@@ -2,7 +2,7 @@
 
 React + Vite + TypeScript frontend for authenticated dermoscopic image upload, AI classification, and longitudinal result tracking.
 
-> ⚠️ DISCLAIMER: Educational/research purposes only. Not for medical diagnosis.
+>  DISCLAIMER: Educational/research purposes only. Not for medical diagnosis.
 
 ## Overview
 

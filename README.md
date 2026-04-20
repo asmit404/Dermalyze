@@ -2,7 +2,7 @@
 
 AI-assisted skin lesion classification system for educational purposes.
 
-> ⚠️ **DISCLAIMER**: Educational/research purposes only. Not for medical diagnosis. Consult healthcare professionals for medical advice.
+>  **DISCLAIMER**: Educational/research purposes only. Not for medical diagnosis. Consult healthcare professionals for medical advice.
 
 ## Overview
 
@@ -114,11 +114,11 @@ python skin_lesion_classifier/src/prepare_data.py \
 
 ### Key Features
 
-- ✅ **HAM10000 Support**: One-hot encoded ground_truth.csv conversion
-- ✅ **Metadata Extraction**: Auto-extracts age_approx, sex, anatom_site from metadata.csv
-- ✅ **Smart Column Mapping**: Handles naming variations (anatom_site_general → anatom_site)
-- ✅ **Image Validation**: Validates image format and readability
-- ✅ **Dataset Statistics**: Displays class distribution and metadata coverage
+-  **HAM10000 Support**: One-hot encoded ground_truth.csv conversion
+-  **Metadata Extraction**: Auto-extracts age_approx, sex, anatom_site from metadata.csv
+-  **Smart Column Mapping**: Handles naming variations (anatom_site_general → anatom_site)
+-  **Image Validation**: Validates image format and readability
+-  **Dataset Statistics**: Displays class distribution and metadata coverage
 
 ## Workflow
 
@@ -163,10 +163,10 @@ model:
 | 512  | 5.3x            | 6-12              | High-resolution lesions |
 
 **Best Practices:**
-- ✅ Match training and inference image sizes
-- ✅ Reduce batch size when increasing resolution (use gradient accumulation to maintain effective batch size)
-- ✅ Enable mixed precision (`use_amp: true`) for high-resolution training
-- ✅ Use gradient checkpointing (`use_gradient_checkpointing: true`) to save memory
+-  Match training and inference image sizes
+-  Reduce batch size when increasing resolution (use gradient accumulation to maintain effective batch size)
+-  Enable mixed precision (`use_amp: true`) for high-resolution training
+-  Use gradient checkpointing (`use_gradient_checkpointing: true`) to save memory
 
 For complete configuration examples and advanced tuning, see [IMAGE_SIZE_GUIDE.md](IMAGE_SIZE_GUIDE.md).
 

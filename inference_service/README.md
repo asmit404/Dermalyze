@@ -2,7 +2,7 @@
 
 Standalone FastAPI inference API for Dermalyze. This service is intentionally decoupled from the training pipeline for independent deployment.
 
-> ⚠️ DISCLAIMER: Educational/research purposes only. Not for medical diagnosis.
+>  DISCLAIMER: Educational/research purposes only. Not for medical diagnosis.
 
 ## Overview
 
