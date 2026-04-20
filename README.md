@@ -175,7 +175,7 @@ For complete configuration examples and advanced tuning, see [IMAGE_SIZE_GUIDE.m
 - **Comprehensive macro-averaged metrics** - Track per-class and macro performance for imbalanced datasets
 - **Test-Time Augmentation (TTA)** for improved accuracy
 - **Model explainability with Grad-CAM** - Visual heatmaps showing decision rationale
-- **K-Fold cross-validation** and ensemble training
+- **Ensemble training** and advanced evaluation diagnostics
 - **Enhanced hyperparameter tuning** with Optuna - aligned checkpoint selection and explicit eval config
 - **Mixed precision training** (AMP) and gradient checkpointing
 - **Class imbalance handling**: Configurable weighted sampling, focal loss, and label smoothing

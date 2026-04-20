@@ -1,16 +1,21 @@
+import argparse
 import json
-import sys
+from pathlib import Path
 
 
-def analyze_fit(history_file):
+def analyze_fit(history_file: Path):
     with open(history_file) as f:
         history = json.load(f)
 
     val_loss = history["val_loss"]
     train_loss = history["train_loss"]
 
-    # Check last 5 epochs
-    recent_gap = [train_loss[i] - val_loss[i] for i in range(-5, 0)]
+    window = min(5, len(train_loss), len(val_loss))
+    if window == 0:
+        raise ValueError("training_history.json contains no loss values")
+
+    # Check recent epochs (up to last 5)
+    recent_gap = [train_loss[i] - val_loss[i] for i in range(-window, 0)]
     avg_gap = sum(recent_gap) / len(recent_gap)
 
     print(f" Recent Gap (last 5 epochs): {avg_gap:.4f}")
@@ -29,5 +34,18 @@ def analyze_fit(history_file):
         return "severe_overfit"
 
 
+def main():
+    parser = argparse.ArgumentParser(
+        description="Quickly diagnose underfitting/overfitting from training_history.json"
+    )
+    parser.add_argument(
+        "history_file",
+        type=Path,
+        help="Path to training history JSON (e.g., outputs/run_xxx/training_history.json)",
+    )
+    args = parser.parse_args()
+    analyze_fit(args.history_file)
+
+
 if __name__ == "__main__":
-    analyze_fit(sys.argv[1])
+    main()

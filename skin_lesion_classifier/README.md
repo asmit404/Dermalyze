@@ -241,18 +241,6 @@ python src/inference.py --ensemble model1.pt model2.pt model3.pt --image path/to
 
 ## Sweeps and Tuning
 
-K-fold sweep and aggregation:
-
-```bash
-python scripts/run_kfold_sweep.py --config config.yaml
-```
-
-Parallel folds:
-
-```bash
-python scripts/run_kfold_sweep.py --config config.yaml --max-parallel-folds 5
-```
-
 Optuna tuning:
 
 ```bash
@@ -271,19 +259,18 @@ Ensemble training helper:
 python scripts/train_ensemble.py --config config.yaml
 ```
 
-Shell ensemble helper:
-
-```bash
-bash scripts/train_ensemble.sh
-```
-
 ## Analysis Utilities
 
 ```bash
 python scripts/visualize_training.py --run outputs/run_xxx
 python scripts/check_fit.py outputs/run_xxx/training_history.json
+python scripts/diagnose_generalization.py --run outputs/run_xxx --images-dir data/HAM10000_Training/images
 python scripts/benchmark.py --config config.yaml --num-batches 20
 ```
+
+`diagnose_generalization.py` writes a held-out generalization diagnosis report to
+`outputs/run_xxx/generalization_eval/` (JSON + text), using evaluation metrics,
+confusion patterns, calibration, and confidence behavior.
 
 ## Metadata and Imbalance Notes
 
