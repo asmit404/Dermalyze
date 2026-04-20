@@ -265,6 +265,7 @@ python scripts/train_ensemble.py --config config.yaml
 python scripts/visualize_training.py --run outputs/run_xxx
 python scripts/check_fit.py outputs/run_xxx/training_history.json
 python scripts/diagnose_generalization.py --run outputs/run_xxx --images-dir data/HAM10000_Training/images
+python scripts/diagnose_generalization.py --run outputs/run_xxx --images-dir data/HAM10000_Val/images --test-csv data/HAM10000_Val/labels_with_metadata.csv --skip-segmentation-masks
 python scripts/benchmark.py --config config.yaml --num-batches 20
 ```
 

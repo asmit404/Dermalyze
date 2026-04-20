@@ -43,6 +43,7 @@ def _run_evaluation(
     num_workers: int,
     use_tta: Optional[bool],
     tta_mode: Optional[str],
+    skip_segmentation_masks: bool,
 ) -> None:
     command = [
         sys.executable,
@@ -66,6 +67,8 @@ def _run_evaluation(
         command.append("--use-tta" if use_tta else "--no-use-tta")
     if tta_mode is not None:
         command.extend(["--tta-mode", tta_mode])
+    if skip_segmentation_masks:
+        command.append("--no-use-segmentation-roi-crop")
 
     subprocess.run(command, cwd=str(project_root), check=True)
 
@@ -393,6 +396,11 @@ def main() -> None:
         default=None,
         help="Optional TTA mode passed to evaluate.py",
     )
+    parser.add_argument(
+        "--skip-segmentation-masks",
+        action="store_true",
+        help="Disable segmentation-mask ROI cropping in evaluate.py",
+    )
     args = parser.parse_args()
 
     project_root = Path(__file__).resolve().parent.parent
@@ -455,6 +463,7 @@ def main() -> None:
             num_workers=args.num_workers,
             use_tta=args.use_tta,
             tta_mode=args.tta_mode,
+            skip_segmentation_masks=args.skip_segmentation_masks,
         )
     else:
         if not metrics_path.exists() or not predictions_path.exists():
