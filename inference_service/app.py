@@ -69,7 +69,7 @@ def _resolve_checkpoint_path() -> Path:
 
 
 CHECKPOINT_PATH = _resolve_checkpoint_path()
-IMAGE_SIZE = int(os.environ.get("MODEL_IMAGE_SIZE", "224"))
+IMAGE_SIZE = int(os.environ.get("MODEL_IMAGE_SIZE", "300"))
 USE_TTA = os.environ.get("USE_TTA", "false").lower() == "true"
 TTA_MODE = os.environ.get("TTA_MODE", "medium")
 TTA_AGGREGATION = os.environ.get("TTA_AGGREGATION", "geometric_mean")

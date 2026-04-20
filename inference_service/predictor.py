@@ -75,7 +75,7 @@ def apply_clahe_to_pil(
     return Image.fromarray(image_rgb_clahe)
 
 
-def get_base_tta_transform(image_size: int = 224) -> transforms.Compose:
+def get_base_tta_transform(image_size: int = 300) -> transforms.Compose:
     """Get the canonical inference transform used as one TTA branch."""
     normalize = transforms.Normalize(mean=IMAGENET_MEAN, std=IMAGENET_STD)
     return transforms.Compose(
@@ -87,7 +87,7 @@ def get_base_tta_transform(image_size: int = 224) -> transforms.Compose:
     )
 
 
-def get_tta_transforms(image_size: int = 224) -> list[transforms.Compose]:
+def get_tta_transforms(image_size: int = 300) -> list[transforms.Compose]:
     """Return the common TTA transform set (8 branches)."""
     normalize = transforms.Normalize(mean=IMAGENET_MEAN, std=IMAGENET_STD)
     base_transform = get_base_tta_transform(image_size)
@@ -154,7 +154,7 @@ def get_tta_transforms(image_size: int = 224) -> list[transforms.Compose]:
     ]
 
 
-def get_full_extra_tta_transforms(image_size: int = 224) -> list[transforms.Compose]:
+def get_full_extra_tta_transforms(image_size: int = 300) -> list[transforms.Compose]:
     """Get corner crop branches used only in full TTA mode."""
     normalize = transforms.Normalize(mean=IMAGENET_MEAN, std=IMAGENET_STD)
     scaled_size = int(image_size * 1.1)
@@ -187,7 +187,7 @@ class SkinLesionPredictor:
         self,
         checkpoint_path: Union[str, Path],
         device: Optional[str] = None,
-        image_size: int = 224,
+        image_size: int = 300,
     ):
         self.checkpoint_path = Path(checkpoint_path)
         self.image_size = image_size

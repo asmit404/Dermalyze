@@ -96,7 +96,7 @@ Response:
 Core inference:
 
 - `MODEL_CHECKPOINT` (optional; explicit checkpoint path)
-- `MODEL_IMAGE_SIZE` (default: `224`)
+- `MODEL_IMAGE_SIZE` (default: `300`)
 - `USE_TTA` (`true|false`, default: `false`)
 - `TTA_MODE` (`light|medium|full`, default: `medium`)
 - `TTA_AGGREGATION` (`mean|geometric_mean|max`, default: `geometric_mean`)

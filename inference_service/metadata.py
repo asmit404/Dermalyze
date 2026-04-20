@@ -27,7 +27,7 @@ IMAGENET_MEAN = [0.485, 0.456, 0.406]
 IMAGENET_STD = [0.229, 0.224, 0.225]
 
 
-def get_inference_transform(image_size: int = 224) -> transforms.Compose:
+def get_inference_transform(image_size: int = 300) -> transforms.Compose:
     """Return deterministic inference transform matching validation preprocessing."""
     return transforms.Compose(
         [
@@ -40,7 +40,7 @@ def get_inference_transform(image_size: int = 224) -> transforms.Compose:
 
 def preprocess_image(
     image: Image.Image | np.ndarray | str | Path,
-    image_size: int = 224,
+    image_size: int = 300,
 ) -> torch.Tensor:
     """Preprocess a single image and return a batch tensor shaped (1, C, H, W)."""
     if isinstance(image, (str, Path)):
