@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import base64
 import io
+import logging
 from typing import Optional, Tuple, Union
 
 import numpy as np
@@ -15,6 +16,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from PIL import Image
+
+logger = logging.getLogger(__name__)
 
 
 class GradCAM:
@@ -135,7 +138,10 @@ class GradCAM:
         return self._compute_cam_from_captured_tensors()
 
     def _compute_cam_from_captured_tensors(self) -> np.ndarray:
-        """Compute normalized CAM from hook-captured activations and gradients."""
+        """Compute normalized CAM from hook-captured activations and gradients.
+
+        Uses global average pooling of gradients (vanilla Grad-CAM weighting).
+        """
         activations = self.activations  # (1, C, H, W)
         gradients = self.gradients  # (1, C, H, W)
 
@@ -144,6 +150,66 @@ class GradCAM:
 
         # Global average pooling of gradients to get per-channel weights
         weights = gradients.mean(dim=(2, 3), keepdim=True)  # (1, C, 1, 1)
+
+        # Weighted combination of activation maps
+        cam = (weights * activations).sum(dim=1, keepdim=True)  # (1, 1, H, W)
+
+        # Keep only positive contributions
+        cam = F.relu(cam)
+
+        # Normalize to [0, 1]
+        cam = cam.squeeze().cpu().numpy()
+        if cam.max() > 0:
+            cam = cam / cam.max()
+
+        return cam
+
+
+class GradCAMPlusPlus(GradCAM):
+    """Grad-CAM++ — improved spatial localization via pixel-wise gradient weighting.
+
+    Inherits all hook registration and forward/backward logic from GradCAM.
+    Only the CAM weight computation is different: instead of globally averaging
+    gradients per channel, Grad-CAM++ computes pixel-wise weights using a
+    second-order approximation that better captures partial/small activations.
+
+    Reference: Chattopadhyay et al., "Grad-CAM++: Generalized Gradient-based
+    Visual Explanations for Deep Convolutional Networks", WACV 2018.
+
+    Why better for dermoscopy:
+    - Lesions are often small relative to the full image
+    - Multiple structures (border, pigment network) can be separately relevant
+    - Pixel-wise weighting avoids diluting gradients from non-lesion background
+    """
+
+    def _compute_cam_from_captured_tensors(self) -> np.ndarray:
+        """Compute Grad-CAM++ CAM using pixel-wise second-order gradient weights."""
+        activations = self.activations  # (1, C, H, W)
+        gradients = self.gradients      # (1, C, H, W)
+
+        if activations is None or gradients is None:
+            raise RuntimeError("Failed to capture activations or gradients")
+
+        # --- Grad-CAM++ weight computation ---
+        # α_kc = (∂²y^c / ∂A^k_{ij}²) / (2·∂²y^c/∂A^k_{ij}² + Σ A^k_{ab}·∂³y^c/∂A^k_{ij}³)
+        # For the ReLU network approximation this simplifies to:
+        #   numerator   = grad²
+        #   denominator = 2·grad² + Σ_{spatial}(activation · grad³)
+        #   α = numerator / (denominator + ε)
+        #   weight_k = Σ_{ij} α^k_{ij} · ReLU(grad^k_{ij})
+
+        grad2 = gradients ** 2                           # (1, C, H, W)
+        grad3 = gradients ** 3                           # (1, C, H, W)
+
+        # Sum of activations weighted by grad³, summed over spatial dims
+        global_sum = (activations * grad3).sum(dim=(2, 3), keepdim=True)  # (1, C, 1, 1)
+
+        # Pixel-wise alpha weights
+        eps = 1e-7
+        alpha = grad2 / (2.0 * grad2 + global_sum + eps)  # (1, C, H, W)
+
+        # Only positive gradients contribute (equivalent to ReLU on gradients)
+        weights = (alpha * F.relu(gradients)).sum(dim=(2, 3), keepdim=True)  # (1, C, 1, 1)
 
         # Weighted combination of activation maps
         cam = (weights * activations).sum(dim=1, keepdim=True)  # (1, 1, H, W)
@@ -198,12 +264,24 @@ def get_target_layer(model: nn.Module) -> nn.Module:
     if isinstance(backbone, nn.Module):
         features = getattr(backbone, "features", None)
         if isinstance(features, nn.Sequential) and len(features) > 0:
-            return features[-1]
+            layer = features[-1]
+            logger.debug(
+                "Grad-CAM target layer resolved: %s.backbone.features[-1] → %s",
+                type(base_model).__name__,
+                type(layer).__name__,
+            )
+            return layer
 
     # Fallback for torchvision-style models exposing features directly
     features = getattr(base_model, "features", None)
     if isinstance(features, nn.Sequential) and len(features) > 0:
-        return features[-1]
+        layer = features[-1]
+        logger.debug(
+            "Grad-CAM target layer resolved (direct features): %s.features[-1] → %s",
+            type(base_model).__name__,
+            type(layer).__name__,
+        )
+        return layer
 
     # Last-resort fallback: use the deepest Conv2d to avoid hard failure.
     conv_layers = [
