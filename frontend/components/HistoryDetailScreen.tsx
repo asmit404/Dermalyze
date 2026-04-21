@@ -142,6 +142,7 @@ const HistoryDetailScreen: React.FC<HistoryDetailScreenProps> = ({ item, onBack 
         allScores: classes,
         notes: noteText || undefined,
         imageDataUrl: item.imageUrl || undefined,
+        metadata: item.metadata ?? null,
       });
     } finally {
       setExportingPdf(false);
@@ -186,6 +187,41 @@ const HistoryDetailScreen: React.FC<HistoryDetailScreenProps> = ({ item, onBack 
             </span>
           </div>
         </div>
+
+        {/* PATIENT METADATA — only rendered when at least one field is non-null */}
+        {(() => {
+          const chips: { label: string; value: string }[] = [];
+          if (item.metadata?.ageApprox != null)
+            chips.push({ label: 'Age', value: `${item.metadata.ageApprox} yrs` });
+          if (item.metadata?.sex)
+            chips.push({
+              label: 'Sex',
+              value: item.metadata.sex.charAt(0).toUpperCase() + item.metadata.sex.slice(1),
+            });
+          if (item.metadata?.anatomSite)
+            chips.push({
+              label: 'Site',
+              value: item.metadata.anatomSite
+                .split('_')
+                .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+                .join(' '),
+            });
+          if (chips.length === 0) return null;
+          return (
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mr-1">Patient</span>
+              {chips.map((chip) => (
+                <span
+                  key={chip.label}
+                  className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-teal-50 border border-teal-200 text-xs"
+                >
+                  <span className="font-semibold text-teal-500 uppercase tracking-wide text-[10px]">{chip.label}</span>
+                  <span className="text-slate-700 font-medium">{chip.value}</span>
+                </span>
+              ))}
+            </div>
+          );
+        })()}
 
         {/* PRIMARY RESULT CARD — includes analyzed image */}
         {info ? (

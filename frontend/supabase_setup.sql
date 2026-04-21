@@ -15,7 +15,8 @@ create table if not exists public.analyses (
   predicted_class_name text not null,      -- e.g. "Melanoma"
   confidence          numeric(5,2) not null, -- e.g. 67.40
   all_scores          jsonb,               -- [{"id":"mel","name":"Melanoma","score":67.4}, ...]
-  notes               text                 -- free-text clinician note (nullable)
+  notes               text,                -- free-text clinician note (nullable)
+  metadata            jsonb                -- patient metadata: {age_approx, sex, anatom_site} (nullable)
 );
 
 -- Index for fast per-user history queries
@@ -27,6 +28,9 @@ alter table public.analyses add column if not exists notes text;
 
 -- Migration: add gradcam_image_url column for explainability heatmaps (safe to re-run)
 alter table public.analyses add column if not exists gradcam_image_url text;
+
+-- Migration: add metadata column for patient information captured at analysis time (safe to re-run)
+alter table public.analyses add column if not exists metadata jsonb;
 
 
 -- ── 2. Row Level Security ─────────────────────────────────────────────────────

@@ -9,13 +9,14 @@ import { optimizeImage } from '../lib/imageOptimization';
 import { encryptImage, getEncryptedExtension } from '../lib/imageEncryption';
 import { useDataCache } from '../lib/dataCache';
 import { generateDermatologyReport } from '../lib/pdfReportGenerator';
-import type { ClassResult } from '../lib/types';
+import type { ClassResult, InferenceMetadata } from '../lib/types';
 
 interface ResultsScreenProps {
   image: string | null;
   results: ClassResult[] | null;
   gradcamImage?: string | null;
   caseId: string;
+  metadata?: InferenceMetadata | null;
   onAnalyzeAnother: () => void;
   onNavigateToHistory: () => void;
 }
@@ -64,6 +65,7 @@ const ResultsScreen: React.FC<ResultsScreenProps> = ({
   results,
   gradcamImage,
   caseId,
+  metadata,
   onAnalyzeAnother,
   onNavigateToHistory,
 }) => {
@@ -192,6 +194,17 @@ const ResultsScreen: React.FC<ResultsScreenProps> = ({
 
         // Insert analysis record — id is the client-generated UUID so the
         // displayed Case ID always matches what is stored in the database.
+        // Only store metadata fields that were actually provided (null for the rest).
+        const metadataPayload = {
+          age_approx: metadata?.ageApprox ?? null,
+          sex: metadata?.sex ?? null,
+          anatom_site: metadata?.anatomSite ?? null,
+        };
+        const hasAnyMetadata =
+          metadataPayload.age_approx !== null ||
+          metadataPayload.sex !== null ||
+          metadataPayload.anatom_site !== null;
+
         const { error: insertErr } = await supabase.from('analyses').insert({
           id: caseId,
           user_id: user.id,
@@ -201,6 +214,7 @@ const ResultsScreen: React.FC<ResultsScreenProps> = ({
           predicted_class_name: predictedClass.name,
           confidence: predictedClass.score,
           all_scores: results,
+          metadata: hasAnyMetadata ? metadataPayload : null,
         });
         if (insertErr) throw insertErr;
         setSaveCompleted(true);
@@ -266,6 +280,7 @@ const ResultsScreen: React.FC<ResultsScreenProps> = ({
         allScores: classes,
         notes: noteText,
         imageDataUrl: image || undefined,
+        metadata: metadata ?? null,
       });
     } finally {
       setExportingPdf(false);
@@ -331,6 +346,38 @@ const ResultsScreen: React.FC<ResultsScreenProps> = ({
             <span className="font-semibold text-slate-700">{analysisDate}</span>
           </div>
         </div>
+
+        {/* PATIENT METADATA — only rendered when at least one field is non-null */}
+        {(() => {
+          const chips: { label: string; value: string }[] = [];
+          if (metadata?.ageApprox != null)
+            chips.push({ label: 'Age', value: `${metadata.ageApprox} yrs` });
+          if (metadata?.sex)
+            chips.push({ label: 'Sex', value: metadata.sex.charAt(0).toUpperCase() + metadata.sex.slice(1) });
+          if (metadata?.anatomSite)
+            chips.push({
+              label: 'Site',
+              value: metadata.anatomSite
+                .split('_')
+                .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+                .join(' '),
+            });
+          if (chips.length === 0) return null;
+          return (
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mr-1">Patient</span>
+              {chips.map((chip) => (
+                <span
+                  key={chip.label}
+                  className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-teal-50 border border-teal-200 text-xs"
+                >
+                  <span className="font-semibold text-teal-500 uppercase tracking-wide text-[10px]">{chip.label}</span>
+                  <span className="text-slate-700 font-medium">{chip.value}</span>
+                </span>
+              ))}
+            </div>
+          );
+        })()}
 
         {/* PRIMARY RESULT CARD — includes analyzed image */}
         <ResultCard

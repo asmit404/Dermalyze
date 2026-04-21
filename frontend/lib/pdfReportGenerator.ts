@@ -1,5 +1,6 @@
 import { jsPDF } from 'jspdf';
 import type { ClassResult } from './types';
+import type { InferenceMetadata } from './types';
 import type { ClassInfo, RiskSeverity } from './classInfo';
 import { getRiskSeverity } from './classInfo';
 
@@ -15,6 +16,7 @@ export interface ReportData {
   allScores?: ClassResult[] | null;
   notes?: string;
   imageDataUrl?: string;
+  metadata?: InferenceMetadata | null; // Patient metadata captured at analysis time
 }
 
 function getRiskColor(severity: RiskSeverity): [number, number, number] {
@@ -166,11 +168,64 @@ export async function generateDermatologyReport(data: ReportData): Promise<void>
 
   y += 24;
 
+  // === PATIENT INFORMATION (only if metadata was provided) ===
+  const meta = data.metadata;
+  const hasAge = meta?.ageApprox != null;
+  const hasSex = meta?.sex != null && meta.sex.trim() !== '';
+  const hasSite = meta?.anatomSite != null && meta.anatomSite.trim() !== '';
+  const hasMetadata = hasAge || hasSex || hasSite;
+
+  // Dynamic section counter — starts at I if no metadata, II if metadata exists
+  const ROMAN = ['I', 'II', 'III', 'IV', 'V', 'VI', 'VII'];
+  let sectionIdx = hasMetadata ? 1 : 0; // 0-based index into ROMAN
+  const nextSection = () => ROMAN[sectionIdx++];
+
+  if (hasMetadata) {
+    pdf.setFont('helvetica', 'bold');
+    pdf.setFontSize(8);
+    setColor(pdf, COLORS.text);
+    pdf.text('I. PATIENT INFORMATION', margin, y);
+    y += 2;
+    setDrawColor(pdf, COLORS.primary);
+    pdf.setLineWidth(0.5);
+    pdf.line(margin, y, margin + 60, y);
+    y += 5;
+
+    const patientBoxY = y;
+    const patientFields: { label: string; value: string }[] = [];
+    if (hasAge) patientFields.push({ label: 'AGE', value: `${meta!.ageApprox} years` });
+    if (hasSex) patientFields.push({ label: 'SEX', value: meta!.sex!.charAt(0).toUpperCase() + meta!.sex!.slice(1) });
+    if (hasSite) patientFields.push({ label: 'ANATOMICAL SITE', value: meta!.anatomSite!.split('_').map((w: string) => w.charAt(0).toUpperCase() + w.slice(1)).join(' ') });
+
+    const patientBoxHeight = 14;
+    setFillColor(pdf, COLORS.bg);
+    setDrawColor(pdf, COLORS.border);
+    pdf.setLineWidth(0.3);
+    pdf.rect(margin, patientBoxY, contentWidth, patientBoxHeight, 'FD');
+    setFillColor(pdf, COLORS.primary);
+    pdf.rect(margin, patientBoxY, 2, patientBoxHeight, 'F');
+
+    const fieldColWidth = contentWidth / patientFields.length;
+    patientFields.forEach((field, idx) => {
+      const fx = margin + 8 + idx * fieldColWidth;
+      pdf.setFont('helvetica', 'bold');
+      pdf.setFontSize(7);
+      setColor(pdf, COLORS.primary);
+      pdf.text(field.label, fx, patientBoxY + 5);
+      pdf.setFont('helvetica', 'normal');
+      pdf.setFontSize(9);
+      setColor(pdf, COLORS.text);
+      pdf.text(field.value, fx, patientBoxY + 11);
+    });
+
+    y += patientBoxHeight + 8;
+  }
+
   // === PRIMARY DIAGNOSIS ===
   pdf.setFont('helvetica', 'bold');
   pdf.setFontSize(8);
   setColor(pdf, COLORS.text);
-  pdf.text('I. PRIMARY DIAGNOSIS', margin, y);
+  pdf.text(`${nextSection()}. PRIMARY DIAGNOSIS`, margin, y);
   y += 2;
 
   setDrawColor(pdf, COLORS.primary);
@@ -238,7 +293,7 @@ export async function generateDermatologyReport(data: ReportData): Promise<void>
   pdf.setFont('helvetica', 'bold');
   pdf.setFontSize(8);
   setColor(pdf, COLORS.text);
-  pdf.text('II. ANALYZED IMAGE', col1X, img1Y);
+  pdf.text(`${nextSection()}. ANALYZED IMAGE`, col1X, img1Y);
   const imgBoxY = img1Y + 5;
 
   setDrawColor(pdf, COLORS.border);
@@ -270,7 +325,7 @@ export async function generateDermatologyReport(data: ReportData): Promise<void>
   pdf.setFont('helvetica', 'bold');
   pdf.setFontSize(8);
   setColor(pdf, COLORS.text);
-  pdf.text('III. CLINICAL CHARACTERISTICS', col2X, det1Y);
+  pdf.text(`${nextSection()}. CLINICAL CHARACTERISTICS`, col2X, det1Y);
 
   let detailY = det1Y + 5;
 
@@ -336,7 +391,7 @@ export async function generateDermatologyReport(data: ReportData): Promise<void>
     pdf.setFont('helvetica', 'bold');
     pdf.setFontSize(8);
     setColor(pdf, COLORS.text);
-    pdf.text('IV. DIFFERENTIAL DIAGNOSIS PROBABILITIES', margin, y);
+    pdf.text(`${nextSection()}. DIFFERENTIAL DIAGNOSIS PROBABILITIES`, margin, y);
     y += 2;
     setDrawColor(pdf, COLORS.primary);
     pdf.setLineWidth(0.5);
@@ -395,7 +450,7 @@ export async function generateDermatologyReport(data: ReportData): Promise<void>
   pdf.setFont('helvetica', 'bold');
   pdf.setFontSize(8);
   setColor(pdf, COLORS.text);
-  pdf.text('V. CLINICAL NOTES & OBSERVATIONS', margin, y);
+  pdf.text(`${nextSection()}. CLINICAL NOTES & OBSERVATIONS`, margin, y);
   y += 2;
   setDrawColor(pdf, COLORS.primary);
   pdf.setLineWidth(0.5);

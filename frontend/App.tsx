@@ -393,6 +393,7 @@ const App: React.FC = () => {
                       results={analysisResults}
                       gradcamImage={analysisGradcam}
                       caseId={analysisCaseId}
+                      metadata={inferenceMetadata}
                       onAnalyzeAnother={resetAnalysis}
                       onNavigateToHistory={() => navigate(ROUTES.history)}
                     />

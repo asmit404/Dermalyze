@@ -24,6 +24,7 @@ export interface AnalysisHistoryItem {
   gradcamPath?: string;
   allScores?: ClassResult[];
   notes?: string;
+  metadata?: InferenceMetadata | null; // Patient metadata captured at analysis time
 }
 
 export interface DashStats {

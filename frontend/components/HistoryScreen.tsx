@@ -105,7 +105,7 @@ const HistoryScreen: React.FC<HistoryScreenProps> = ({ onBack, onViewDetails }) 
     let query = supabase
       .from('analyses')
       .select(
-        'id, created_at, predicted_class_id, predicted_class_name, confidence, image_url, gradcam_image_url, all_scores, notes'
+        'id, created_at, predicted_class_id, predicted_class_name, confidence, image_url, gradcam_image_url, all_scores, notes, metadata'
       )
       .eq('user_id', targetUserId);
 
@@ -292,6 +292,15 @@ const HistoryScreen: React.FC<HistoryScreenProps> = ({ onBack, onViewDetails }) 
         gradcamPath: rawGradcamUrl && !rawGradcamUrl.startsWith('http') ? rawGradcamUrl : undefined,
         allScores: (row.all_scores as AnalysisHistoryItem['allScores']) ?? undefined,
         notes: (row.notes as string | null) ?? undefined,
+        metadata: (() => {
+          const m = row.metadata as Record<string, unknown> | null;
+          if (!m) return null;
+          return {
+            ageApprox: (m.age_approx as number | null) ?? null,
+            sex: (m.sex as string | null) ?? null,
+            anatomSite: (m.anatom_site as string | null) ?? null,
+          };
+        })(),
       };
     });
   };
