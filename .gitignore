@@ -88,7 +88,6 @@ htmlcov/
 ml/
 *.pt
 *.pth
-inference_service/swin/pytorch_model.bin
 
 skin_lesion_classifier/data/HAM10000/
 skin_lesion_classifier/data/isic2018val/

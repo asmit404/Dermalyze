@@ -7,9 +7,8 @@ Standalone FastAPI inference API for Dermalyze. This service is intentionally de
 ## Overview
 
 - Framework: FastAPI
-- Checkpoint loading: local `.pt` checkpoint or Hugging Face Transformers Swin model directory
+- Checkpoint loading: local `.pt` checkpoint
 - Supported model architectures in this package: ConvNeXt-Tiny and torchvision EfficientNet variants (`efficientnet_b0`-`efficientnet_b7`, `efficientnetv2_s`, `efficientnetv2_m`, `efficientnetv2_l`)
-- Swin-Tiny inference is supported through `inference_service/swin/` when `MODEL_BACKEND=swin`
 - Output classes: 7 lesion classes (`akiec`, `bcc`, `bkl`, `df`, `mel`, `nv`, `vasc`)
 
 Metadata-fusion checkpoints are supported. If a checkpoint contains `metadata_encoder_state`, the predictor automatically instantiates the multi-input fusion model.
@@ -41,19 +40,6 @@ Default checkpoint backend load order:
 3. legacy fallback: `inference_service/model/checkpoint_best.pt`
 
 If no valid checkpoint is found, `/classify` returns `503`.
-
-Swin backend:
-
-```bash
-MODEL_BACKEND=swin uvicorn inference_service.app:app --host 0.0.0.0 --port 8000
-```
-
-By default this loads `inference_service/swin/` when that local Transformers model directory is complete. The directory must contain `config.json`, `preprocessor_config.json`, and model weights at runtime. `pytorch_model.bin` is gitignored because it is large; if the local weights are absent in a Hugging Face deployment, the service falls back to the default Hub model id. Set `SWIN_MODEL_SOURCE` explicitly when deploying a different Hub repo.
-
-Optional Swin env vars:
-
-- `SWIN_MODEL_SOURCE`: local model directory or Hugging Face model id
-- `SWIN_WEIGHTS`: standalone `pytorch_model.bin` path when config/processor files come from `SWIN_MODEL_SOURCE`
 
 ## API Endpoints
 
@@ -109,11 +95,9 @@ Response:
 
 Core inference:
 
-- `MODEL_BACKEND` (`checkpoint|swin`, default: `checkpoint`)
+- `MODEL_BACKEND` (optional; only `checkpoint` is supported, default: `checkpoint`)
 - `MODEL_CHECKPOINT` (optional; explicit checkpoint path)
 - `MODEL_IMAGE_SIZE` (default: `300`)
-- `SWIN_MODEL_SOURCE` (optional; local model directory or Hugging Face model id)
-- `SWIN_WEIGHTS` (optional; standalone Swin `.bin` weights path)
 - `USE_TTA` (`true|false`, default: `false`)
 - `TTA_MODE` (`light|medium|full`, default: `medium`)
 - `TTA_AGGREGATION` (`mean|geometric_mean|max`, default: `geometric_mean`)
@@ -160,7 +144,6 @@ Built-in CORS defaults always include:
 - installs dependencies
 - downloads checkpoint to `/app/models/checkpoint_best.pt`
 - sets `MODEL_CHECKPOINT=/app/models/checkpoint_best.pt`
-- can run Swin by setting `MODEL_BACKEND=swin` in the Hugging Face Space variables
 - starts Uvicorn on port `7860`
 
 ## Integration
