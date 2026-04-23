@@ -41,6 +41,9 @@ export interface AnalysisHistoryItem {
   notes?: string;
   metadata?: InferenceMetadata | null; // Patient metadata captured at analysis time
   imageDecryptFailed?: boolean; // True when the image exists but could not be decrypted
+  trustRecommendation?: string;
+  trustUncertaintyScore?: number;
+  trustQualityFlags?: string[];
 }
 
 export interface DashStats {

@@ -32,6 +32,11 @@ alter table public.analyses add column if not exists gradcam_image_url text;
 -- Migration: add metadata column for patient information captured at analysis time (safe to re-run)
 alter table public.analyses add column if not exists metadata jsonb;
 
+-- Migration: add trust layer columns for abstention routing and uncertainty (safe to re-run)
+alter table public.analyses add column if not exists trust_recommendation text;
+alter table public.analyses add column if not exists trust_uncertainty_score numeric(5,4);
+alter table public.analyses add column if not exists trust_quality_flags jsonb;
+
 
 -- ── 2. Row Level Security ─────────────────────────────────────────────────────
 alter table public.analyses enable row level security;
@@ -101,7 +106,7 @@ set search_path = public, pg_temp as $$
     'total',          count(*),
     'this_month',     count(*) filter (where created_at >= date_trunc('month', now())),
     'avg_confidence', round(avg(confidence)::numeric, 1),
-    'needs_review',   count(*) filter (where predicted_class_id in ('mel','bcc','akiec')),
+    'needs_review',   count(*) filter (where trust_recommendation in ('review_required', 'reject') or (trust_recommendation is null and predicted_class_id in ('mel','bcc','akiec'))),
     'class_counts', (
       select json_agg(row_to_json(t))
       from (

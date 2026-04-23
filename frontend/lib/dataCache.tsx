@@ -233,7 +233,7 @@ export const DataCacheProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         const { data, error } = await supabase
           .from('analyses')
           .select(
-            'id, created_at, predicted_class_id, predicted_class_name, confidence, image_url, gradcam_image_url, all_scores, notes'
+            'id, created_at, predicted_class_id, predicted_class_name, confidence, image_url, gradcam_image_url, all_scores, notes, trust_recommendation, trust_uncertainty_score, trust_quality_flags'
           )
           .eq('user_id', userId)
           .order('created_at', { ascending: false })
@@ -325,6 +325,9 @@ export const DataCacheProvider: React.FC<{ children: React.ReactNode }> = ({ chi
               (rawUrl && !rawUrl.startsWith('http') && failedPaths.has(rawUrl)) ||
               (rawGradcamUrl && !rawGradcamUrl.startsWith('http') && failedPaths.has(rawGradcamUrl)) ||
               false,
+            trustRecommendation: (row.trust_recommendation as string | null) ?? undefined,
+            trustUncertaintyScore: (row.trust_uncertainty_score as number | null) ?? undefined,
+            trustQualityFlags: (row.trust_quality_flags as string[] | null) ?? undefined,
           };
         });
 

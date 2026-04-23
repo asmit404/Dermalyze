@@ -219,6 +219,9 @@ const ResultsScreen: React.FC<ResultsScreenProps> = ({
           confidence: predictedClass.score,
           all_scores: results,
           metadata: hasAnyMetadata ? metadataPayload : null,
+          trust_recommendation: trustResult.recommendation,
+          trust_uncertainty_score: trustResult.uncertainty.score,
+          trust_quality_flags: trustResult.quality_flags,
         });
         if (insertErr) throw insertErr;
         setSaveCompleted(true);
