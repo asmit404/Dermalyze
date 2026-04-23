@@ -7,7 +7,7 @@ import importlib
 import logging
 import os
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
@@ -47,6 +47,17 @@ CLASS_NAMES: Dict[str, str] = {
 _SERVICE_DIR = Path(__file__).resolve().parent
 _DEFAULT_CHECKPOINT = _SERVICE_DIR / "models" / "checkpoint_best.pt"
 _LEGACY_DEFAULT_CHECKPOINT = _SERVICE_DIR / "model" / "checkpoint_best.pt"
+_DEFAULT_SWIN_MODEL_ID = "gianlab/swin-tiny-patch4-window7-224-finetuned-skin-cancer"
+_DEFAULT_SWIN_MODEL_DIR = _SERVICE_DIR / "swin"
+
+MODEL_BACKEND = os.environ.get("MODEL_BACKEND", "checkpoint").strip().lower()
+if MODEL_BACKEND in {"", "local", "classic", "pt"}:
+    MODEL_BACKEND = "checkpoint"
+if MODEL_BACKEND not in {"checkpoint", "swin"}:
+    raise RuntimeError(
+        "MODEL_BACKEND must be either 'checkpoint' or 'swin'; "
+        f"got {MODEL_BACKEND!r}."
+    )
 
 DEFAULT_CORS_ORIGINS: List[str] = [
     "http://localhost:3000",
@@ -75,9 +86,30 @@ TTA_MODE = os.environ.get("TTA_MODE", "medium")
 TTA_AGGREGATION = os.environ.get("TTA_AGGREGATION", "geometric_mean")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "").strip()
 
+SWIN_MODEL_SOURCE = os.environ.get("SWIN_MODEL_SOURCE", "").strip()
+if not SWIN_MODEL_SOURCE:
+    local_swin_model_is_complete = (
+        (_DEFAULT_SWIN_MODEL_DIR / "config.json").exists()
+        and (_DEFAULT_SWIN_MODEL_DIR / "preprocessor_config.json").exists()
+        and (_DEFAULT_SWIN_MODEL_DIR / "pytorch_model.bin").exists()
+    )
+    SWIN_MODEL_SOURCE = (
+        str(_DEFAULT_SWIN_MODEL_DIR)
+        if local_swin_model_is_complete
+        else _DEFAULT_SWIN_MODEL_ID
+    )
+
+_raw_swin_weights = os.environ.get("SWIN_WEIGHTS", "").strip()
+SWIN_WEIGHTS_PATH = Path(_raw_swin_weights) if _raw_swin_weights else None
+
 SUPABASE_URL = os.environ.get("SUPABASE_URL", "").strip()
 SUPABASE_JWT_SECRET = os.environ.get("SUPABASE_JWT_SECRET", "").strip()
 
+print(f"[config] MODEL_BACKEND: {MODEL_BACKEND}")
+if MODEL_BACKEND == "swin":
+    print(f"[config] SWIN_MODEL_SOURCE: {SWIN_MODEL_SOURCE}")
+    swin_weights_label = SWIN_WEIGHTS_PATH if SWIN_WEIGHTS_PATH else "from model source"
+    print(f"[config] SWIN_WEIGHTS: {swin_weights_label}")
 print(f"[config] SUPABASE_URL: {'SET - ' + SUPABASE_URL if SUPABASE_URL else 'NOT SET'}")
 print(f"[config] SUPABASE_JWT_SECRET: {'SET' if SUPABASE_JWT_SECRET else 'NOT SET'}")
 
@@ -280,12 +312,30 @@ class ClassifyResponse(BaseModel):
     gradcam_image: Optional[str] = None  # Base64-encoded PNG heatmap overlay
 
 
-_predictor: SkinLesionPredictor | None = None
+_predictor: Any | None = None
 
 
-def _get_predictor() -> SkinLesionPredictor:
+def _get_predictor() -> Any:
     global _predictor
     if _predictor is None:
+        if MODEL_BACKEND == "swin":
+            try:
+                from .swin import SwinSkinLesionPredictor
+            except ImportError as exc:
+                if getattr(exc, "name", "") == "transformers":
+                    raise RuntimeError(
+                        "MODEL_BACKEND=swin requires transformers. "
+                        "Install inference_service/requirements.txt."
+                    ) from exc
+                from swin import SwinSkinLesionPredictor
+
+            _predictor = SwinSkinLesionPredictor(
+                model_source=SWIN_MODEL_SOURCE,
+                weights_path=SWIN_WEIGHTS_PATH,
+                image_size=IMAGE_SIZE,
+            )
+            return _predictor
+
         if not CHECKPOINT_PATH.exists():
             raise FileNotFoundError(
                 "Model checkpoint not found at "
