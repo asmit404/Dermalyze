@@ -58,6 +58,7 @@ export interface DashStats {
     confidence: number;
     date: string;
     imageUrl: string | null;
+    trustRecommendation?: string;
   } | null;
 }
 

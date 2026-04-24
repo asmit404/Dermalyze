@@ -105,7 +105,7 @@ set search_path = public, pg_temp as $$
   select json_build_object(
     'total',          count(*),
     'this_month',     count(*) filter (where created_at >= date_trunc('month', now())),
-    'avg_confidence', round(avg(confidence)::numeric, 1),
+    'avg_confidence', round(avg(confidence) filter (where trust_recommendation is distinct from 'reject')::numeric, 1),
     'needs_review',   count(*) filter (where trust_recommendation in ('review_required', 'reject') or (trust_recommendation is null and predicted_class_id in ('mel','bcc','akiec'))),
     'class_counts', (
       select json_agg(row_to_json(t))
@@ -115,7 +115,7 @@ set search_path = public, pg_temp as $$
           predicted_class_name as name,
           count(*)::int        as count
         from analyses
-        where user_id = auth.uid()
+        where user_id = auth.uid() and trust_recommendation is distinct from 'reject'
         group by predicted_class_id, predicted_class_name
         order by count desc
       ) t

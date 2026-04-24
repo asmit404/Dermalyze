@@ -143,6 +143,9 @@ const HistoryDetailScreen: React.FC<HistoryDetailScreenProps> = ({ item, onBack 
         notes: noteText || undefined,
         imageDataUrl: item.imageUrl || undefined,
         metadata: item.metadata ?? null,
+        trustRecommendation: item.trustRecommendation,
+        trustUncertaintyScore: item.trustUncertaintyScore,
+        trustQualityFlags: item.trustQualityFlags,
       });
     } finally {
       setExportingPdf(false);
@@ -223,56 +226,108 @@ const HistoryDetailScreen: React.FC<HistoryDetailScreenProps> = ({ item, onBack 
           );
         })()}
 
-        {/* PRIMARY RESULT CARD — includes analyzed image */}
-        {info ? (
-          <ResultCard
-            classId={item.classId}
-            className={item.className}
-            confidence={item.confidence}
-            info={info}
-            imageUrl={item.imageUrl}
-            gradcamImage={item.gradcamUrl ?? null}
-          />
-        ) : (
-          <section className="bg-white rounded-xl border border-slate-200 shadow-sm p-5">
-            <div className="flex flex-col gap-3">
-              <div className="flex items-center gap-3">
-                <span className="text-2xl font-bold text-teal-700 uppercase">{item.classId}</span>
-                <span className="text-sm font-medium text-slate-400 bg-slate-100 px-2 py-1 rounded">
-                  {item.confidence.toFixed(1)}% confidence
-                </span>
-              </div>
-              <p className="text-base text-slate-700">{item.className}</p>
-              <p className="text-sm text-slate-500">
-                Classification information is not available for this lesion type.
-              </p>
+        {/* IMAGE QUALITY FLAGS */}
+        {item.trustQualityFlags && item.trustQualityFlags.some((f) => f.startsWith('image_')) && (
+          <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 shadow-sm flex gap-3">
+            <svg className="w-5 h-5 text-blue-600 shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+            <div>
+              <h3 className="text-blue-800 font-bold text-sm">Image Quality Notice</h3>
+              <ul className="text-blue-700 text-xs mt-1 list-disc list-inside">
+                {item.trustQualityFlags.includes('image_too_blurry') && <li>Image appears blurry.</li>}
+                {item.trustQualityFlags.includes('image_underexposed') && <li>Image appears underexposed (too dark).</li>}
+                {item.trustQualityFlags.includes('image_overexposed') && <li>Image appears overexposed (too bright).</li>}
+              </ul>
             </div>
-          </section>
+          </div>
         )}
 
-        {/* PROBABILITY CHART — only render when real scores are available */}
-        {classes ? (
-          <ProbabilityChart classes={classes} predictedClassId={item.classId} />
+        {/* TRUST LAYER UI ENFORCEMENT */}
+        {item.trustRecommendation === 'reject' ? (
+          <div className="bg-red-50 border border-red-200 rounded-xl p-6 shadow-sm">
+            <h2 className="text-red-800 text-lg font-bold mb-2 flex items-center gap-2">
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+              </svg>
+              Analysis Rejected: Extreme Uncertainty
+            </h2>
+            <p className="text-red-700 text-sm mb-4">
+              The model is highly uncertain about this image and could not produce a reliable classification. This typically occurs if the image is out-of-distribution (not a skin lesion), very poor quality, or an extremely rare presentation. Specific predictions have been hidden to prevent clinical anchoring on an unreliable output.
+            </p>
+            <p className="text-red-700 text-sm font-semibold">
+              Action Required: Please capture a higher quality image or proceed with manual clinical evaluation.
+            </p>
+          </div>
         ) : (
-          <section className="bg-white rounded-xl border border-slate-200 shadow-sm p-5">
-            <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-1">
-              Probability Breakdown
-            </p>
-            <p className="text-sm text-slate-500">
-              Full probability breakdown is not available for this record.
-            </p>
-          </section>
-        )}
+          <>
+            {item.trustRecommendation === 'review_required' && (
+              <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 shadow-sm flex gap-3">
+                <svg className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                </svg>
+                <div>
+                  <h3 className="text-amber-800 font-bold text-sm">Review Required: High Uncertainty</h3>
+                  <p className="text-amber-700 text-xs mt-1">
+                    The model is uncertain about this prediction. It may be a borderline case or visually ambiguous. Please rely strictly on clinical judgment and consider the full probability distribution.
+                  </p>
+                </div>
+              </div>
+            )}
 
-        {/* MEDICAL INFO — Full-width row below the bento pair */}
-        {info ? (
-          <MedicalInfoCard info={info} />
-        ) : (
-          <section className="bg-white rounded-xl border border-slate-200 shadow-sm p-5">
-            <p className="text-sm text-slate-500">
-              No condition information available for this classification.
-            </p>
-          </section>
+            {/* PRIMARY RESULT CARD — includes analyzed image */}
+            {info ? (
+              <ResultCard
+                classId={item.classId}
+                className={item.className}
+                confidence={item.confidence}
+                info={info}
+                imageUrl={item.imageUrl}
+                gradcamImage={item.gradcamUrl ?? null}
+                uncertaintyScore={item.trustUncertaintyScore}
+              />
+            ) : (
+              <section className="bg-white rounded-xl border border-slate-200 shadow-sm p-5">
+                <div className="flex flex-col gap-3">
+                  <div className="flex items-center gap-3">
+                    <span className="text-2xl font-bold text-teal-700 uppercase">{item.classId}</span>
+                    <span className="text-sm font-medium text-slate-400 bg-slate-100 px-2 py-1 rounded">
+                      {item.confidence.toFixed(1)}% confidence
+                    </span>
+                  </div>
+                  <p className="text-base text-slate-700">{item.className}</p>
+                  <p className="text-sm text-slate-500">
+                    Classification information is not available for this lesion type.
+                  </p>
+                </div>
+              </section>
+            )}
+
+            {/* PROBABILITY CHART — only render when real scores are available */}
+            {classes ? (
+              <ProbabilityChart classes={classes} predictedClassId={item.classId} />
+            ) : (
+              <section className="bg-white rounded-xl border border-slate-200 shadow-sm p-5">
+                <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-1">
+                  Probability Breakdown
+                </p>
+                <p className="text-sm text-slate-500">
+                  Full probability breakdown is not available for this record.
+                </p>
+              </section>
+            )}
+
+            {/* MEDICAL INFO — Full-width row below the bento pair */}
+            {info ? (
+              <MedicalInfoCard info={info} />
+            ) : (
+              <section className="bg-white rounded-xl border border-slate-200 shadow-sm p-5">
+                <p className="text-sm text-slate-500">
+                  No condition information available for this classification.
+                </p>
+              </section>
+            )}
+          </>
         )}
 
         {/* NOTES SECTION */}
@@ -368,7 +423,8 @@ const HistoryDetailScreen: React.FC<HistoryDetailScreenProps> = ({ item, onBack 
         <div className="flex flex-col gap-3">
           <button
             onClick={exportPdf}
-            disabled={exportingPdf || !info}
+            disabled={exportingPdf || !info || item.trustRecommendation === 'reject'}
+            title={item.trustRecommendation === 'reject' ? 'PDF report is unavailable for rejected analyses.' : undefined}
             className="w-full py-2.5 px-4 rounded-full font-medium text-sm border-2 border-teal-600 text-teal-700 bg-teal-50 transition-all duration-200 hover:bg-teal-100 hover:border-teal-700 active:bg-teal-200 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-teal-400 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             <span className="flex items-center justify-center gap-2">

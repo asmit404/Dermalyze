@@ -105,7 +105,7 @@ const HistoryScreen: React.FC<HistoryScreenProps> = ({ onBack, onViewDetails }) 
     let query = supabase
       .from('analyses')
       .select(
-        'id, created_at, predicted_class_id, predicted_class_name, confidence, image_url, gradcam_image_url, all_scores, notes, metadata'
+        'id, created_at, predicted_class_id, predicted_class_name, confidence, image_url, gradcam_image_url, all_scores, notes, metadata, trust_recommendation, trust_uncertainty_score, trust_quality_flags'
       )
       .eq('user_id', targetUserId);
 
@@ -297,6 +297,9 @@ const HistoryScreen: React.FC<HistoryScreenProps> = ({ onBack, onViewDetails }) 
           (rawUrl && !rawUrl.startsWith('http') && failedPaths.has(rawUrl)) ||
           (rawGradcamUrl && !rawGradcamUrl.startsWith('http') && failedPaths.has(rawGradcamUrl)) ||
           false,
+        trustRecommendation: (row.trust_recommendation as string | null) ?? undefined,
+        trustUncertaintyScore: (row.trust_uncertainty_score as number | null) ?? undefined,
+        trustQualityFlags: (row.trust_quality_flags as string[] | null) ?? undefined,
         metadata: (() => {
           const m = row.metadata as Record<string, unknown> | null;
           if (!m) return null;
@@ -1073,14 +1076,29 @@ const HistoryScreen: React.FC<HistoryScreenProps> = ({ onBack, onViewDetails }) 
                     </div>
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2 mb-0.5">
-                        <span className="text-sm font-bold text-teal-700 uppercase">
-                          {item.classId}
-                        </span>
-                        <span className="text-[10px] font-bold text-slate-400 bg-slate-100 px-1.5 py-0.5 rounded tracking-tighter">
-                          {item.confidence.toFixed(1)}%
-                        </span>
+                        {item.trustRecommendation === 'reject' ? (
+                          <span className="text-sm font-bold text-red-700 uppercase">
+                            Rejected
+                          </span>
+                        ) : (
+                          <>
+                            <span className="text-sm font-bold text-teal-700 uppercase">
+                              {item.classId}
+                            </span>
+                            <span className="text-[10px] font-bold text-slate-400 bg-slate-100 px-1.5 py-0.5 rounded tracking-tighter">
+                              {item.confidence.toFixed(1)}%
+                            </span>
+                            {item.trustRecommendation === 'review_required' && (
+                              <span className="text-[10px] font-bold text-amber-700 bg-amber-100 px-1.5 py-0.5 rounded uppercase tracking-tighter" title="Review Required">
+                                Review
+                              </span>
+                            )}
+                          </>
+                        )}
                       </div>
-                      <p className="text-xs text-slate-500 truncate">{item.className}</p>
+                      <p className="text-xs text-slate-500 truncate">
+                        {item.trustRecommendation === 'reject' ? 'Uncertain Analysis' : item.className}
+                      </p>
                       <p className="text-xs text-slate-400 mt-0.5">
                         {item.date} · {item.time}
                       </p>
@@ -1207,15 +1225,29 @@ const HistoryScreen: React.FC<HistoryScreenProps> = ({ onBack, onViewDetails }) 
                         </td>
                         <td className="px-6 py-4">
                           <div className="flex flex-col">
-                            <div className="flex items-center gap-2">
-                              <span className="text-sm font-bold text-teal-700 uppercase">
-                                {item.classId}
-                              </span>
-                              <span className="text-[10px] font-bold text-slate-400 bg-slate-100 px-1.5 py-0.5 rounded tracking-tighter">
-                                {item.confidence.toFixed(1)}%
-                              </span>
-                            </div>
-                            <span className="text-xs text-slate-500">{item.className}</span>
+                            {item.trustRecommendation === 'reject' ? (
+                              <>
+                                <span className="text-sm font-bold text-red-700 uppercase">Rejected</span>
+                                <span className="text-xs text-slate-500">Uncertain Analysis</span>
+                              </>
+                            ) : (
+                              <>
+                                <div className="flex items-center gap-2">
+                                  <span className="text-sm font-bold text-teal-700 uppercase">
+                                    {item.classId}
+                                  </span>
+                                  <span className="text-[10px] font-bold text-slate-400 bg-slate-100 px-1.5 py-0.5 rounded tracking-tighter">
+                                    {item.confidence.toFixed(1)}%
+                                  </span>
+                                  {item.trustRecommendation === 'review_required' && (
+                                    <span className="text-[10px] font-bold text-amber-700 bg-amber-100 px-1.5 py-0.5 rounded uppercase tracking-tighter" title="Review Required">
+                                      Review
+                                    </span>
+                                  )}
+                                </div>
+                                <span className="text-xs text-slate-500">{item.className}</span>
+                              </>
+                            )}
                           </div>
                         </td>
                         <td className="px-6 py-4 text-right">

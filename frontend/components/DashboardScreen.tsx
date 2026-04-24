@@ -57,13 +57,15 @@ const DashboardScreen: React.FC<DashboardScreenProps> = ({
 
         const { data, error } = await supabase
           .from('analyses')
-          .select('id, created_at, predicted_class_id, predicted_class_name, confidence')
+          .select('id, created_at, predicted_class_id, predicted_class_name, confidence, trust_recommendation')
           .eq('user_id', user.id)
           .order('created_at', { ascending: false });
 
         if (error) throw error;
 
-        const mappedData = (data ?? []).map((row) => ({
+        const mappedData = (data ?? [])
+          .filter((row) => row.trust_recommendation !== 'reject')
+          .map((row) => ({
           id: row.id,
           createdAt: row.created_at,
           date: '',
@@ -375,23 +377,43 @@ const DashboardScreen: React.FC<DashboardScreenProps> = ({
                   </div>
 
                   <div className="flex-1 min-w-0">
-                    <p className="text-sm font-semibold text-slate-800 truncate leading-none mb-1">
-                      {stats.lastAnalysis.className}
-                    </p>
-                    <div className="flex items-center gap-2 mb-2">
-                      <span
-                        className={[
-                          'text-[10px] font-bold px-1.5 py-0.5 rounded border',
-                          RISK_LABEL[stats.lastAnalysis.classId]?.cls ??
-                            'text-slate-500 bg-slate-50 border-slate-200',
-                        ].join(' ')}
-                      >
-                        {RISK_LABEL[stats.lastAnalysis.classId]?.label ?? 'Unknown'}
-                      </span>
-                      <span className="text-xs text-slate-400 font-medium tabular-nums">
-                        {stats.lastAnalysis.confidence.toFixed(1)}% conf.
-                      </span>
-                    </div>
+                    {stats.lastAnalysis.trustRecommendation === 'reject' ? (
+                      <>
+                        <p className="text-sm font-bold text-red-700 truncate leading-none mb-1 uppercase">
+                          Rejected
+                        </p>
+                        <div className="flex items-center gap-2 mb-2">
+                          <span className="text-[10px] font-bold px-1.5 py-0.5 rounded border text-red-600 bg-red-50 border-red-200">
+                            Uncertain Analysis
+                          </span>
+                        </div>
+                      </>
+                    ) : (
+                      <>
+                        <p className="text-sm font-semibold text-slate-800 truncate leading-none mb-1">
+                          {stats.lastAnalysis.className}
+                        </p>
+                        <div className="flex flex-wrap items-center gap-2 mb-2">
+                          <span
+                            className={[
+                              'text-[10px] font-bold px-1.5 py-0.5 rounded border',
+                              RISK_LABEL[stats.lastAnalysis.classId]?.cls ??
+                                'text-slate-500 bg-slate-50 border-slate-200',
+                            ].join(' ')}
+                          >
+                            {RISK_LABEL[stats.lastAnalysis.classId]?.label ?? 'Unknown'}
+                          </span>
+                          <span className="text-xs text-slate-400 font-medium tabular-nums">
+                            {stats.lastAnalysis.confidence.toFixed(1)}% conf.
+                          </span>
+                          {stats.lastAnalysis.trustRecommendation === 'review_required' && (
+                            <span className="text-[10px] font-bold text-amber-700 bg-amber-100 px-1.5 py-0.5 rounded border border-amber-200 uppercase tracking-tighter" title="Review Required">
+                              Review
+                            </span>
+                          )}
+                        </div>
+                      </>
+                    )}
                     <p className="text-[11px] text-slate-400">{stats.lastAnalysis.date}</p>
                   </div>
                 </div>

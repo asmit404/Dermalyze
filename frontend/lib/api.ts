@@ -93,13 +93,28 @@ export const classifyImage = async (
   const url = new URL(`${API_BASE_URL}/classify`, window.location.origin);
   url.searchParams.set('include_gradcam', includeGradcam.toString());
 
-  const response = await fetch(url.toString(), {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${session.access_token}`,
-    },
-    body: formData,
-  });
+  // Add a 30-second timeout to prevent indefinite hanging if the backend gets stuck
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 30000);
+
+  let response: Response;
+  try {
+    response = await fetch(url.toString(), {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${session.access_token}`,
+      },
+      body: formData,
+      signal: controller.signal,
+    });
+  } catch (error) {
+    if (error instanceof Error && error.name === 'AbortError') {
+      throw new ApiError('The analysis took too long and timed out. Please try a smaller image.', 408);
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeoutId);
+  }
 
   const json = await response.json().catch(() => null);
 

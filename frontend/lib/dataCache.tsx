@@ -124,7 +124,7 @@ export const DataCacheProvider: React.FC<{ children: React.ReactNode }> = ({ chi
             supabase
               .from('analyses')
               .select(
-                'predicted_class_id, predicted_class_name, confidence, created_at, image_url, gradcam_image_url'
+                'predicted_class_id, predicted_class_name, confidence, created_at, image_url, gradcam_image_url, trust_recommendation'
               )
               .eq('user_id', user.id)
               .order('created_at', { ascending: false })
@@ -185,6 +185,7 @@ export const DataCacheProvider: React.FC<{ children: React.ReactNode }> = ({ chi
                 year: 'numeric',
               }),
               imageUrl: resolvedImageUrl,
+              trustRecommendation: (last.trust_recommendation as string | null) ?? undefined,
             }
           : null;
 
@@ -233,7 +234,7 @@ export const DataCacheProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         const { data, error } = await supabase
           .from('analyses')
           .select(
-            'id, created_at, predicted_class_id, predicted_class_name, confidence, image_url, gradcam_image_url, all_scores, notes, trust_recommendation, trust_uncertainty_score, trust_quality_flags'
+            'id, created_at, predicted_class_id, predicted_class_name, confidence, image_url, gradcam_image_url, all_scores, notes, trust_recommendation, trust_uncertainty_score, trust_quality_flags, metadata'
           )
           .eq('user_id', userId)
           .order('created_at', { ascending: false })
@@ -328,6 +329,15 @@ export const DataCacheProvider: React.FC<{ children: React.ReactNode }> = ({ chi
             trustRecommendation: (row.trust_recommendation as string | null) ?? undefined,
             trustUncertaintyScore: (row.trust_uncertainty_score as number | null) ?? undefined,
             trustQualityFlags: (row.trust_quality_flags as string[] | null) ?? undefined,
+            metadata: (() => {
+              const m = row.metadata as Record<string, unknown> | null;
+              if (!m) return null;
+              return {
+                ageApprox: (m.age_approx as number | null) ?? null,
+                sex: (m.sex as string | null) ?? null,
+                anatomSite: (m.anatom_site as string | null) ?? null,
+              };
+            })(),
           };
         });
 

@@ -17,6 +17,9 @@ export interface ReportData {
   notes?: string;
   imageDataUrl?: string;
   metadata?: InferenceMetadata | null; // Patient metadata captured at analysis time
+  trustRecommendation?: string;
+  trustUncertaintyScore?: number;
+  trustQualityFlags?: string[];
 }
 
 function getRiskColor(severity: RiskSeverity): [number, number, number] {
@@ -267,21 +270,66 @@ export async function generateDermatologyReport(data: ReportData): Promise<void>
   pdf.setTextColor(255, 255, 255);
   pdf.text(riskText, riskBadgeX + 3, diagBoxY + 14.5);
 
-  // Confidence (right side)
+  // Confidence and Uncertainty (right side)
+  const hasUncertainty = data.trustUncertaintyScore !== undefined;
+
   pdf.setFont('helvetica', 'bold');
   pdf.setFontSize(7);
   setColor(pdf, COLORS.secondary);
-  const confLabel = 'CONFIDENCE';
-  const confLabelWidth = pdf.getTextWidth(confLabel);
-  pdf.text(confLabel, pageWidth - margin - 35, diagBoxY + 5);
 
-  pdf.setFontSize(20);
-  setColor(pdf, COLORS.primary);
-  const confValue = `${data.confidence.toFixed(1)}%`;
-  const confValueWidth = pdf.getTextWidth(confValue);
-  pdf.text(confValue, pageWidth - margin - confValueWidth / 2 - 17.5, diagBoxY + 12);
+  if (hasUncertainty) {
+    const cLabel = 'CONFIDENCE';
+    const cWidth = pdf.getTextWidth(cLabel);
+    pdf.text(cLabel, pageWidth - margin - 50 - cWidth / 2, diagBoxY + 5);
 
-  y = diagBoxY + 28;
+    const uLabel = 'UNCERTAINTY';
+    const uWidth = pdf.getTextWidth(uLabel);
+    pdf.text(uLabel, pageWidth - margin - 15 - uWidth / 2, diagBoxY + 5);
+
+    pdf.setFontSize(16);
+    setColor(pdf, COLORS.primary);
+    const cVal = `${data.confidence.toFixed(1)}%`;
+    const cValWidth = pdf.getTextWidth(cVal);
+    pdf.text(cVal, pageWidth - margin - 50 - cValWidth / 2, diagBoxY + 12);
+
+    setColor(pdf, [71, 85, 105]); // slate-600
+    const uVal = `${(data.trustUncertaintyScore! * 100).toFixed(1)}%`;
+    const uValWidth = pdf.getTextWidth(uVal);
+    pdf.text(uVal, pageWidth - margin - 15 - uValWidth / 2, diagBoxY + 12);
+  } else {
+    const confLabel = 'CONFIDENCE';
+    const confLabelWidth = pdf.getTextWidth(confLabel);
+    pdf.text(confLabel, pageWidth - margin - 35, diagBoxY + 5);
+
+    pdf.setFontSize(20);
+    setColor(pdf, COLORS.primary);
+    const confValue = `${data.confidence.toFixed(1)}%`;
+    const confValueWidth = pdf.getTextWidth(confValue);
+    pdf.text(confValue, pageWidth - margin - confValueWidth / 2 - 17.5, diagBoxY + 12);
+  }
+
+  y = diagBoxY + 24;
+
+  if (data.trustRecommendation === 'review_required') {
+    const warningBoxY = y;
+    setFillColor(pdf, [254, 243, 199]); // amber-50
+    setDrawColor(pdf, [253, 230, 138]); // amber-200
+    pdf.setLineWidth(0.3);
+    pdf.rect(margin, warningBoxY, contentWidth, 12, 'FD');
+
+    pdf.setFont('helvetica', 'bold');
+    pdf.setFontSize(8);
+    setColor(pdf, [180, 83, 9]); // amber-700
+    pdf.text('REVIEW REQUIRED: HIGH UNCERTAINTY', margin + 4, warningBoxY + 5);
+
+    pdf.setFont('helvetica', 'normal');
+    pdf.setFontSize(7);
+    pdf.text('The model is uncertain about this prediction. Please rely strictly on clinical judgment.', margin + 4, warningBoxY + 9);
+
+    y = warningBoxY + 16;
+  } else {
+    y += 4;
+  }
 
   // === TWO COLUMN SECTION: IMAGE & DETAILS ===
   const col1X = margin;
@@ -444,6 +492,43 @@ export async function generateDermatologyReport(data: ReportData): Promise<void>
     });
 
     y += 5;
+  }
+
+  // === IMAGE QUALITY FLAGS ===
+  if (data.trustQualityFlags && data.trustQualityFlags.length > 0) {
+    const flags = data.trustQualityFlags.filter(f => f.startsWith('image_'));
+    if (flags.length > 0) {
+      pdf.setFont('helvetica', 'bold');
+      pdf.setFontSize(8);
+      setColor(pdf, COLORS.text);
+      pdf.text(`${nextSection()}. IMAGE QUALITY ALERTS`, margin, y);
+      y += 2;
+      setDrawColor(pdf, COLORS.primary);
+      pdf.setLineWidth(0.5);
+      pdf.line(margin, y, margin + 40, y);
+      y += 4;
+
+      const qBoxY = y;
+      setFillColor(pdf, [239, 246, 255]); // blue-50
+      setDrawColor(pdf, [191, 219, 254]); // blue-200
+      pdf.setLineWidth(0.3);
+      pdf.rect(margin, qBoxY, contentWidth, 12, 'FD');
+
+      pdf.setFont('helvetica', 'normal');
+      pdf.setFontSize(8);
+      setColor(pdf, [30, 64, 175]); // blue-800
+
+      const flagTexts = flags.map(f => {
+        if (f === 'image_too_blurry') return 'Image appears blurry.';
+        if (f === 'image_underexposed') return 'Image appears underexposed (too dark).';
+        if (f === 'image_overexposed') return 'Image appears overexposed (too bright).';
+        return f;
+      }).join(' ');
+
+      pdf.text(flagTexts, margin + 4, qBoxY + 7);
+
+      y = qBoxY + 16;
+    }
   }
 
   // === CLINICAL NOTES ===

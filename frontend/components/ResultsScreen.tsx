@@ -288,6 +288,9 @@ const ResultsScreen: React.FC<ResultsScreenProps> = ({
         notes: noteText,
         imageDataUrl: image || undefined,
         metadata: metadata ?? null,
+        trustRecommendation: trustResult.recommendation,
+        trustUncertaintyScore: trustResult.uncertainty.score,
+        trustQualityFlags: trustResult.quality_flags,
       });
     } finally {
       setExportingPdf(false);
