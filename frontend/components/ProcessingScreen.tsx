@@ -40,15 +40,22 @@ const ProcessingScreen: React.FC<ProcessingScreenProps> = ({
 
         onComplete(result.classes, result.gradcamImage, result.trustResult);
       } catch (err: unknown) {
-        const msg =
+        let msg =
           err instanceof Error
             ? err.message
             : 'An unexpected error occurred during classification.';
-        // Retryable: 503 (service unavailable), 429 (rate limit), 500 (server error), network errors
+            
+        // If it's a 500 error from our ApiError, it might be a hard crash from OpenCV.
+        if (err instanceof ApiError && err.status === 500 && msg.includes('500')) {
+          msg = 'The image could not be processed due to a server error. The image may be corrupted or in an unsupported format.';
+        }
+
+        // Retryable: 503 (service unavailable), 429 (rate limit), 408 (timeout), network errors
+        // Note: 500 is NO LONGER retryable. A hard crash usually means a permanent failure for this specific image.
         const retryable =
           (err instanceof ApiError &&
-            (err.status === 503 || err.status === 429 || err.status === 500)) ||
-          (err instanceof TypeError && err.message.includes('fetch')); // Network errors
+            (err.status === 503 || err.status === 429 || err.status === 408)) ||
+          (err instanceof TypeError && err.message.includes('fetch') && !(err instanceof ApiError)); // Network errors
         onError(msg, retryable);
       }
     };
