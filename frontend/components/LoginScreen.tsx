@@ -98,9 +98,9 @@ const LoginScreen: React.FC<LoginScreenProps> = ({
           persistLockout(next, until);
           setLockCountdown(Math.ceil(LOCKOUT_MS / 1000));
           setError(`Too many failed attempts. Please wait ${LOCKOUT_MS / 60_000} minutes.`);
-        } else if (authError.message.includes('Invalid login credentials')) {
+        } else if (authError.message.includes('Invalid login credentials') || authError.message.includes('User not found')) {
           setError(
-            `Invalid email or password. ${MAX_ATTEMPTS - next} attempt${MAX_ATTEMPTS - next === 1 ? '' : 's'} remaining.`
+            `The credentials entered don’t match our records. ${MAX_ATTEMPTS - next} attempt${MAX_ATTEMPTS - next === 1 ? '' : 's'} remaining.`
           );
         } else if (authError.message.includes('Email not confirmed')) {
           setError(
