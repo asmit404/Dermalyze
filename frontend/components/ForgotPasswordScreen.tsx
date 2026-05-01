@@ -112,10 +112,9 @@ const ForgotPasswordScreen: React.FC<ForgotPasswordScreenProps> = ({
 
                 <h2 className="text-2xl font-bold text-slate-900 mb-3">Check Your Email</h2>
 
-                <p className="text-slate-600 mb-2 leading-relaxed">
-                  We've sent a password reset link to:
+                <p className="text-slate-600 mb-6 leading-relaxed">
+                  If an account is associated with that email, a reset link has been sent.
                 </p>
-                <p className="text-teal-600 font-semibold mb-6">{email}</p>
 
                 <div className="bg-teal-50 border border-teal-200 rounded-xl p-4 mb-8">
                   <p className="text-sm text-teal-800 leading-relaxed">
