@@ -134,10 +134,33 @@ const ProfileScreen: React.FC<ProfileScreenProps> = ({ onBack }) => {
       const userId = session.user.id;
 
       // 1. Delete user's analysis images from storage
-      const { data: files } = await supabase.storage.from('analysis-images').list(userId);
-      if (files && files.length > 0) {
+      let hasMoreFiles = true;
+      while (hasMoreFiles) {
+        const { data: files, error: listError } = await supabase.storage
+          .from('analysis-images')
+          .list(userId, { limit: 100 });
+          
+        if (listError) throw new Error('Failed to list analysis images.');
+        
+        if (!files || files.length === 0) {
+          hasMoreFiles = false;
+          break;
+        }
+        
         const paths = files.map((f) => `${userId}/${f.name}`);
-        await supabase.storage.from('analysis-images').remove(paths);
+        const { error: removeError, data: removedData } = await supabase.storage
+          .from('analysis-images')
+          .remove(paths);
+          
+        if (removeError) throw new Error('Failed to delete analysis images.');
+        
+        if (!removedData || removedData.length === 0) {
+          throw new Error('Failed to fully delete analysis images.');
+        }
+
+        if (files.length < 100) {
+          hasMoreFiles = false;
+        }
       }
 
       // 2. Call the Edge Function to fully delete the auth user.
@@ -238,12 +261,13 @@ const ProfileScreen: React.FC<ProfileScreenProps> = ({ onBack }) => {
             </div>
             <button
               onClick={onBack}
-              className="hidden sm:inline-flex items-center gap-2 px-5 py-2.5 text-sm font-semibold text-white border-2 border-white/30 hover:bg-white/10 rounded-xl transition-colors shrink-0"
+              className="inline-flex items-center gap-2 px-3 sm:px-5 py-2 sm:py-2.5 text-sm font-semibold text-white border-2 border-white/30 hover:bg-white/10 rounded-xl transition-colors shrink-0"
             >
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 19l-7-7m0 0l7-7m-7 7h18" />
               </svg>
-              Back to Dashboard
+              <span className="hidden sm:inline">Back to Dashboard</span>
+              <span className="inline sm:hidden">Back</span>
             </button>
           </div>
         </div>
@@ -325,8 +349,8 @@ const ProfileScreen: React.FC<ProfileScreenProps> = ({ onBack }) => {
                   </div>
                   {/* Info */}
                   <div className="text-center sm:text-left min-w-0 flex-1">
-                    <h2 className="text-xl font-bold text-slate-900 truncate">{fullName || 'Unnamed User'}</h2>
-                    <p className="text-sm text-slate-500 truncate mb-2">{email}</p>
+                    <h2 className="text-xl font-bold text-slate-900 break-words">{fullName || 'Unnamed User'}</h2>
+                    <p className="text-sm text-slate-500 break-all mb-2">{email}</p>
                     <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-slate-400 uppercase tracking-widest">
                       Primary Email
                     </span>
@@ -337,7 +361,7 @@ const ProfileScreen: React.FC<ProfileScreenProps> = ({ onBack }) => {
                   <form onSubmit={handleSaveProfile} className="space-y-4">
                     <FeedbackBanner msg={profileMsg} />
                     <div className="flex flex-col sm:flex-row items-end gap-4">
-                      <div className="flex-1 w-full">
+                      <div className="flex-1 w-full [&>*]:mb-0">
                         <Input
                           label="Full Name"
                           type="text"
@@ -346,7 +370,7 @@ const ProfileScreen: React.FC<ProfileScreenProps> = ({ onBack }) => {
                           onChange={(e) => setFullName(e.target.value)}
                         />
                       </div>
-                      <div className="w-full sm:w-auto pb-1">
+                      <div className="w-full sm:w-auto">
                         <Button type="submit" disabled={saving}>
                           {saving ? (
                             <span className="flex items-center justify-center gap-2">
