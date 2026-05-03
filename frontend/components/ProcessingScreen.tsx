@@ -45,17 +45,30 @@ const ProcessingScreen: React.FC<ProcessingScreenProps> = ({
             ? err.message
             : 'An unexpected error occurred during classification.';
             
-        // If it's a 500 error from our ApiError, it might be a hard crash from OpenCV.
-        if (err instanceof ApiError && err.status === 500 && msg.includes('500')) {
-          msg = 'The image could not be processed due to a server error. The image may be corrupted or in an unsupported format.';
+        let retryable = false;
+
+        if (err instanceof ApiError) {
+          if (err.status === 429) {
+            msg = 'Too Many Requests. You have exceeded the upload limit. Please wait 60 seconds before trying again.';
+            retryable = true;
+          } else if (err.status === 422) {
+            // Usually the LLM rejection fallback
+            if (msg.includes('422')) {
+              msg = 'Unprocessable Image. The uploaded file does not appear to contain visible dermatoscopic structures.';
+            }
+            retryable = false;
+          } else if (err.status === 500 && msg.includes('500')) {
+            msg = 'The image could not be processed due to a server error. The image may be corrupted or in an unsupported format.';
+            retryable = false;
+          } else if (err.status === 408 || err.status === 503) {
+            msg = 'The cloud server is currently experiencing heavy load. Please try again later.';
+            retryable = true;
+          }
+        } else if (err instanceof TypeError && err.message.includes('fetch')) {
+          msg = 'Network error. Please check your internet connection and try again.';
+          retryable = true;
         }
 
-        // Retryable: 503 (service unavailable), 429 (rate limit), 408 (timeout), network errors
-        // Note: 500 is NO LONGER retryable. A hard crash usually means a permanent failure for this specific image.
-        const retryable =
-          (err instanceof ApiError &&
-            (err.status === 503 || err.status === 429 || err.status === 408)) ||
-          (err instanceof TypeError && err.message.includes('fetch') && !(err instanceof ApiError)); // Network errors
         onError(msg, retryable);
       }
     };
