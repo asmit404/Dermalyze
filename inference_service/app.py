@@ -99,13 +99,14 @@ USE_TTA = os.environ.get("USE_TTA", "false").lower() == "true"
 TTA_MODE = os.environ.get("TTA_MODE", "medium")
 TTA_AGGREGATION = os.environ.get("TTA_AGGREGATION", "geometric_mean")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "").strip()
+GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash-lite").strip()
 
 SUPABASE_URL = os.environ.get("SUPABASE_URL", "").strip()
 SUPABASE_JWT_SECRET = os.environ.get("SUPABASE_JWT_SECRET", "").strip()
 
 print(f"[config] MODEL_BACKEND: {MODEL_BACKEND}")
 print(f"[config] TRUST_CONFIG_PATH: {TRUST_CONFIG_PATH or 'NOT SET (using defaults)'}")
-print(f"[config] SUPABASE_URL: {'SET - ' + SUPABASE_URL if SUPABASE_URL else 'NOT SET'}")
+print(f"[config] SUPABASE_URL: {'SET' if SUPABASE_URL else 'NOT SET'}")
 print(f"[config] SUPABASE_JWT_SECRET: {'SET' if SUPABASE_JWT_SECRET else 'NOT SET'}")
 
 # Initialize JWKS client for ES256 token verification
@@ -114,8 +115,8 @@ if SUPABASE_URL:
     _jwks_url = f"{SUPABASE_URL}/auth/v1/.well-known/jwks.json"
     try:
         _jwks_client = PyJWKClient(_jwks_url, cache_keys=True, max_cached_keys=16)
-        print(f"[config] JWKS client initialized: {_jwks_url}")
-        logger.info(f"JWKS client initialized: {_jwks_url}")
+        print("[config] JWKS client initialized")
+        logger.info("JWKS client initialized")
     except Exception as e:
         print(f"[config] ERROR initializing JWKS client: {e}")
         logger.error(f"Failed to initialize JWKS client: {e}")
@@ -136,8 +137,8 @@ CORS_ORIGIN_REGEX = os.environ.get(
     "CORS_ORIGIN_REGEX",
     r"https://([a-zA-Z0-9-]+\.)?dermalyze\.tech",
 )
-print(f"[config] CORS_ORIGINS: {', '.join(ORIGINS)}")
-print(f"[config] CORS_ORIGIN_REGEX: {CORS_ORIGIN_REGEX}")
+print(f"[config] CORS_ORIGINS: {len(ORIGINS)} origins configured")
+print(f"[config] CORS_ORIGIN_REGEX: {'SET' if CORS_ORIGIN_REGEX else 'NOT SET'}")
 
 _trusted_proxy_ips_raw = os.environ.get("TRUSTED_PROXY_IPS", "127.0.0.1,::1")
 TRUSTED_PROXY_IPS = {
@@ -422,7 +423,7 @@ async def _validate_dermatoscopic(
         img = types.Part.from_bytes(data=image_bytes, mime_type=mime_type)
 
         response = client.models.generate_content(
-            model="gemini-3.1-flash-lite-preview",
+            model=GEMINI_MODEL,
             contents=[
                 img,
                 (

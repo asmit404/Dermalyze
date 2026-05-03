@@ -128,8 +128,8 @@ Auth:
 - `SUPABASE_JWT_SECRET` (legacy fallback)
 
 Validation:
-
 - `GEMINI_API_KEY` (optional)
+- `GEMINI_MODEL` (optional; defaults to `gemini-2.5-flash-lite`)
 
 CORS and proxy:
 
