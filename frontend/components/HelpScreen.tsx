@@ -41,6 +41,11 @@ const TROUBLESHOOTING: Array<{
     whatToDo: 'Re-export as JPG/PNG and keep file size under 10 MB.',
   },
   {
+    issue: 'Analysis rejected by Trust Layer',
+    whyItHappens: 'Image quality is too low or out-of-distribution (OOD) for the AI model to safely process.',
+    whatToDo: 'Ensure good lighting, centered lesion, and minimal hair/blur. Retake and re-upload the photo.',
+  },
+  {
     issue: 'Low-confidence result',
     whyItHappens: 'Image quality is limited or lesion presentation is atypical.',
     whatToDo: 'Retake with better focus/lighting and correlate with exam findings.',
@@ -53,6 +58,11 @@ const TROUBLESHOOTING: Array<{
 ];
 
 const FAQ = [
+  {
+    question: 'What is the Model Trust System?',
+    answer:
+      'The Trust Layer is a safety mechanism that evaluates if an image is suitable for AI analysis. It rejects blurry, poorly lit, or out-of-distribution images to prevent unsafe or misleading diagnostic predictions.',
+  },
   {
     question: 'How should confidence be interpreted?',
     answer:
